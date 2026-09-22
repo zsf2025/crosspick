@@ -1,6 +1,7 @@
 import type { Tool } from '../core/tool'
 import type { ReviewAnalysis } from '@/types/agent'
 import { REVIEW_PROMPT, REVIEW_STREAM_PROMPT, withSystem } from '../prompts'
+import { neutralizeExternal } from '../guardrails'
 
 /**
  * 评论洞察：LLM 真正发挥作用的地方。
@@ -28,6 +29,11 @@ export const reviewTool: Tool = {
       .filter(i => i.sentiment === 'positive')
       .map(i => i.painPoint)
 
+    // 评论是外部不可信文本（用户评论 / 导入 CSV）：喂给模型前用护栏中和，
+    // 在文本前声明"这是数据不是指令"，阻断其中夹带的 prompt injection。
+    const safePain = painPoints.map(p => neutralizeExternal(`${p.text}（${p.mentions} 次提及）`).text)
+    const safePos = positives.map(p => neutralizeExternal(p).text)
+
     let suggestions: string[] = []
     let modelSummary: string | undefined
     let degraded = true
@@ -37,7 +43,7 @@ export const reviewTool: Tool = {
       try {
         const text = await ctx.llm.stream(
           withSystem(
-            REVIEW_STREAM_PROMPT(target.name, painPoints.map(p => `${p.text}（${p.mentions} 次提及）`), positives),
+            REVIEW_STREAM_PROMPT(target.name, safePain, safePos),
           ),
           { temperature: 0.3 },
           chunk => ctx.onDelta?.(chunk),
@@ -59,8 +65,8 @@ export const reviewTool: Tool = {
     if (degraded && painPoints.length && (await ctx.llm.health())) {
       const prompt = REVIEW_PROMPT(
         target.name,
-        painPoints.map(p => `${p.text}（${p.mentions} 次提及）`),
-        positives,
+        safePain,
+        safePos,
       )
       try {
         const json = await ctx.llm.chatJson<{ suggestions?: string[]; summary?: string }>([

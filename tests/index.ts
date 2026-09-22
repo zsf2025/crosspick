@@ -25,6 +25,7 @@ import './dataio.test'
 import './quality.test'
 import './llm.test'
 import './agent-cancel.test'
+import './tool-selection.test'
 
 const code = await runAll()
 process.exit(code)
