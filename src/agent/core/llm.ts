@@ -10,6 +10,8 @@ export interface ChatMessage {
 export interface ChatOptions {
   temperature?: number
   maxTokens?: number
+  /** Ollama 结构化输出：传 'json' 由 API 层强制模型输出合法 JSON，几乎消灭解析重试 */
+  format?: 'json'
 }
 
 export interface UsageCounter {
@@ -72,12 +74,10 @@ export function extractJson(raw: string): unknown | null {
 export class OllamaProvider implements LLMProvider {
   readonly name = 'ollama'
   private cfg: OllamaConfig
-  private usage: UsageCounter | undefined
   private healthCache: { ok: boolean; at: number } | null = null
 
-  constructor(cfg: OllamaConfig = DEFAULT_OLLAMA, usage?: UsageCounter) {
+  constructor(cfg: OllamaConfig = DEFAULT_OLLAMA) {
     this.cfg = cfg
-    this.usage = usage
   }
 
   configure(patch: Partial<OllamaConfig>) {
@@ -89,35 +89,22 @@ export class OllamaProvider implements LLMProvider {
     return this.cfg
   }
 
-  private countPrompt(messages: ChatMessage[]) {
-    if (!this.usage) return
-    this.usage.llmCalls += 1
-    this.usage.promptChars += messages.reduce((s, m) => s + m.content.length, 0)
-  }
-
-  private countCompletion(text: string) {
-    if (this.usage) this.usage.completionChars += text.length
-  }
-
   async chat(messages: ChatMessage[], options: ChatOptions = {}): Promise<string> {
-    this.countPrompt(messages)
-    const resp = await axios.post(
-      `${this.cfg.baseUrl}/chat`,
-      {
-        model: this.cfg.model,
-        messages,
-        stream: false,
-        options: {
-          temperature: options.temperature ?? 0.2,
-          num_predict: options.maxTokens ?? 2048,
-          num_ctx: 8192,
-        },
+    const body: Record<string, unknown> = {
+      model: this.cfg.model,
+      messages,
+      stream: false,
+      options: {
+        temperature: options.temperature ?? 0.2,
+        num_predict: options.maxTokens ?? 2048,
+        num_ctx: 8192,
       },
-      { timeout: this.cfg.timeoutMs },
-    )
-    const text = (resp.data?.message?.content ?? '') as string
-    this.countCompletion(text)
-    return text
+    }
+    if (options.format) body.format = options.format
+    const resp = await axios.post(`${this.cfg.baseUrl}/chat`, body, {
+      timeout: this.cfg.timeoutMs,
+    })
+    return (resp.data?.message?.content ?? '') as string
   }
 
   async stream(
@@ -170,24 +157,33 @@ export class OllamaProvider implements LLMProvider {
     return full
   }
 
-  /** 结构化输出：解析失败会带着"只输出 JSON"的指令重试一次，仍失败返回 null */
+  /**
+   * 结构化输出：通过 Ollama 的 format:'json' 在 API 层强制合法 JSON，
+   * 1.5b 小模型输出非 JSON 的概率大幅下降，几乎消灭解析重试。
+   * 万一仍解析失败，再带"只输出 JSON"指令兜底重试一次。
+   */
   async chatJson<T>(messages: ChatMessage[], options: ChatOptions = {}): Promise<T | null> {
-    const first = await this.chat(messages, {
-      temperature: options.temperature ?? 0,
-      maxTokens: options.maxTokens ?? 1024,
-    })
-    const parsed = extractJson(first)
-    if (parsed !== null) return parsed as T
-
-    const retry = await this.chat(
-      [
-        ...messages,
-        { role: 'system', content: '请只输出合法的 JSON，不要包含任何解释文字或代码块标记。' },
-      ],
-      { temperature: 0, maxTokens: options.maxTokens ?? 1024 },
-    )
-    const parsed2 = extractJson(retry)
-    return (parsed2 as T) ?? null
+    const call = (extra: ChatMessage[]) =>
+      this.chat([...messages, ...extra], { ...options, format: 'json' })
+    try {
+      const parsed = extractJson(await call([]))
+      if (parsed !== null) return parsed as T
+    } catch {
+      /* format 强制下仍异常则走兜底 */
+    }
+    try {
+      const parsed2 = extractJson(
+        await call([
+          {
+            role: 'system',
+            content: '请只输出合法的 JSON，不要包含任何解释文字或代码块标记。',
+          },
+        ]),
+      )
+      return (parsed2 as T) ?? null
+    } catch {
+      return null
+    }
   }
 
   async health(): Promise<boolean> {
@@ -237,6 +233,6 @@ export function setLLM(p: LLMProvider) {
   current = p
 }
 
-export function createOllamaProvider(cfg?: Partial<OllamaConfig>, usage?: UsageCounter) {
-  return new OllamaProvider({ ...DEFAULT_OLLAMA, ...cfg }, usage)
+export function createOllamaProvider(cfg?: Partial<OllamaConfig>) {
+  return new OllamaProvider({ ...DEFAULT_OLLAMA, ...cfg })
 }

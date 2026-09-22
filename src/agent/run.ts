@@ -12,11 +12,60 @@ import { createDefaultRegistry } from './tools'
 import { route, resolveTargetId } from './router'
 import { buildDigest, summarize } from './summary'
 import { rulePlan, llmPlan, executePlan } from './core/loop'
-import type { LLMProvider } from './core/llm'
+import type { ChatMessage, ChatOptions, LLMProvider } from './core/llm'
 import { NullProvider } from './core/llm'
 
 export function genId(prefix = 'a'): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+/**
+ * 成本计数器包装器：把 LLM 的每次调用（chat / chatJson / stream）以"提示词 + 补全"字符数
+ * 累加进 Tracer 的 usage。放在编排层而非 Provider 内部，是因为 usage 是"一次运行"的视图，
+ * 而 Provider 是全局单例——计数必须由单次 runAgent 持有，才能准确反映这一轮花了多少。
+ */
+class CountingLLM implements LLMProvider {
+  readonly name = 'counting'
+  private inner: LLMProvider
+  private tracer: Tracer
+
+  constructor(inner: LLMProvider, tracer: Tracer) {
+    this.inner = inner
+    this.tracer = tracer
+  }
+
+  private tally(messages: ChatMessage[], completion: string) {
+    this.tracer.recordLlmCall(
+      messages.reduce((s, m) => s + m.content.length, 0),
+      completion.length,
+    )
+  }
+
+  async chat(messages: ChatMessage[], options?: ChatOptions): Promise<string> {
+    const text = await this.inner.chat(messages, options)
+    this.tally(messages, text)
+    return text
+  }
+
+  async chatJson<T>(messages: ChatMessage[], options?: ChatOptions): Promise<T | null> {
+    const json = await this.inner.chatJson<T>(messages, options)
+    if (json !== null) this.tally(messages, JSON.stringify(json))
+    return json
+  }
+
+  async stream(
+    messages: ChatMessage[],
+    options: ChatOptions,
+    onDelta: (chunk: string) => void,
+  ): Promise<string> {
+    const text = await this.inner.stream(messages, options, onDelta)
+    this.tally(messages, text)
+    return text
+  }
+
+  health(): Promise<boolean> {
+    return this.inner.health()
+  }
 }
 
 export interface RunOptions {
@@ -59,7 +108,8 @@ export async function runAgent(opts: RunOptions): Promise<RunOutcome> {
   const query = opts.query.trim()
   const tracer = new Tracer()
   const memory = opts.memory ?? new ConversationMemory()
-  const llm = opts.llm ?? new NullProvider()
+  // 用计数包装器包一层：这一轮所有的模型调用都被记进 tracer.usage，供 UI 展示成本
+  const llm = new CountingLLM(opts.llm ?? new NullProvider(), tracer)
   const registry = opts.registry ?? createDefaultRegistry()
   const rules = opts.rules ?? DEFAULT_RULES
   const fba = opts.fba ?? DEFAULT_FBA_CONFIG
@@ -98,13 +148,16 @@ export async function runAgent(opts: RunOptions): Promise<RunOutcome> {
 
   const ctx: ToolContext = {
     query,
+    // 路由已经定位过一次目标，这里直接透传，工具内部不再各自重新解析，
+    // 既省一次模型调用，也保证"路由说 A、工具改做 B"的不一致不再发生
+    targetId: routed.targetId,
     candidates: opts.candidates,
     rules,
     fba,
     llm,
     tracer,
     resolveTarget: (q: string) => {
-      const tid = resolveTargetId(q, opts.candidates, memory)
+      const tid = routed.targetId ?? resolveTargetId(q, opts.candidates, memory)
       return tid ? opts.candidates.find(c => c.id === tid) ?? null : null
     },
     mutate: (productId: string, kind: string, value: string) => {

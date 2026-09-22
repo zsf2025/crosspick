@@ -14,12 +14,14 @@ import type { Tracer } from './trace'
 
 export interface ToolContext {
   query: string
+  /** 本轮路由已解析出的目标商品 id——优先于 query 重新解析，避免工具各自再算一遍 */
+  targetId?: string | null
   candidates: ProductCandidate[]
   rules: ScoringRules
   fba: FbaConfig
   llm: LLMProvider
   tracer: Tracer
-  /** 从 query 中定位目标商品（名称匹配 / 序号 / 上一轮指代） */
+  /** 从 query 中定位目标商品（名称匹配 / 序号 / 上一轮指代）；若 ctx.targetId 已就绪则直接返回它 */
   resolveTarget: (query: string) => ProductCandidate | null
   /** 流式回调：模型每产出一段文本就回传一次，用于逐字渲染 */
   onDelta?: (chunk: string) => void
@@ -50,6 +52,7 @@ export const EMPTY_RESULT: ToolResult = { message: '' }
 export function defaultContext(partial: Partial<ToolContext> & Pick<ToolContext, 'candidates' | 'llm' | 'tracer' | 'resolveTarget' | 'mutate'>): ToolContext {
   return {
     query: partial.query ?? '',
+    targetId: partial.targetId ?? null,
     candidates: partial.candidates,
     rules: partial.rules ?? DEFAULT_RULES,
     fba: partial.fba ?? DEFAULT_FBA_CONFIG,

@@ -95,7 +95,8 @@ export async function llmPlan(
     if (!steps || !steps.length) return { steps: fallback, planner: 'rule' }
     const valid = steps
       .filter(s => s && typeof s.tool === 'string' && registry.has(s.tool))
-      .map(s => ({ tool: s.tool, args: {} }))
+      // 规则路径会把 targetId 写进 args；模型规划路径丢过 args，这里补回来，保证两条路径行为一致
+      .map(s => ({ tool: s.tool, args: ctx.targetId ? { targetId: ctx.targetId } : {} }))
     if (!valid.length) return { steps: fallback, planner: 'rule' }
     ctx.tracer.thought('模型给出执行计划', valid.map(s => s.tool).join(' → '))
     return { steps: valid, planner: 'llm' }
@@ -167,7 +168,7 @@ export async function executePlan(
       ctx.tracer.thought('模型不可用，结束反思循环')
       break
     }
-    const decision = await reflectNext(ctx, registry, executed)
+    const decision = await reflectNext(ctx, registry, executed, buildReflectionDigest(merged, executed))
     if (decision.done || !decision.next.length) {
       ctx.tracer.thought('模型判定结果已答足', '不再补充工具')
       break
@@ -202,6 +203,33 @@ export interface ExecutedStep {
 }
 
 /**
+ * 把已产出的结构化结果压缩成模型能判断的摘要（纯函数）。
+ * 反思只喂工具散文时，模型看不到 pricing/review/comparison 的真实数值，
+ * 容易误判"答足了"而漏掉该补的步骤——这里把结构化结果也一并喂进去。
+ */
+function buildReflectionDigest(merged: ToolResult, executed: ExecutedStep[]): string {
+  const lines = executed.map(
+    (e, i) => `${i + 1}. ${e.tool} → ${e.message || '（无文字产出）'}`,
+  )
+  if (merged.pricing) {
+    lines.push(`定价结果：${merged.pricing.productName} 建议售价 $${merged.pricing.suggestedPrice}`)
+  }
+  if (merged.review) {
+    const r = merged.review
+    lines.push(`评论结果：${r.productName} ${r.painPoints.length} 条痛点 / ${r.positives.length} 条好评`)
+  }
+  if (merged.comparison) {
+    const c = merged.comparison
+    const winner = c.rows.find(r => r.productId === c.winnerId)
+    lines.push(`对比最优：${winner?.name ?? c.winnerId ?? '无'}`)
+  }
+  if (merged.report?.length) {
+    lines.push(`报告：${merged.report.length} 节`)
+  }
+  return lines.join('\n')
+}
+
+/**
  * 让模型判断是否需要补调工具。
  * 任何异常、解析失败都返回"已完成"——拿不准就停在编排的结果上，这是安全方向。
  */
@@ -209,11 +237,12 @@ export async function reflectNext(
   ctx: ToolContext,
   registry: ToolRegistry,
   executed: ExecutedStep[],
+  digestOverride?: string,
 ): Promise<ReflectionDecision> {
   const allowed = registry.names().filter(n => !REFLECT_BLOCKED.has(n))
-  const digest = executed
-    .map((e, i) => `${i + 1}. ${e.tool} → ${e.message || '（无文字产出）'}`)
-    .join('\n')
+  const digest =
+    digestOverride ??
+    executed.map((e, i) => `${i + 1}. ${e.tool} → ${e.message || '（无文字产出）'}`).join('\n')
   try {
     const raw = await ctx.llm.chat(
       [{ role: 'user', content: REFLECT_PROMPT(ctx.query, allowed.join(', '), digest) }],
