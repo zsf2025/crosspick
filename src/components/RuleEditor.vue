@@ -4,6 +4,7 @@ import type { ScoringRules } from '@/domain/rules'
 import { RULE_PRESETS, cloneRules } from '@/domain/rules'
 import { DIMENSIONS, DIMENSION_LABELS } from '@/types/product'
 import { useSettingsStore } from '@/stores/settings'
+import HelpTip from '@/components/HelpTip.vue'
 
 const props = defineProps<{ rules: ScoringRules }>()
 const emit = defineEmits<{ (e: 'update', rules: ScoringRules): void }>()
@@ -51,7 +52,7 @@ function applyPreset(id: unknown) {
 <template>
   <div class="editor">
     <div class="block">
-      <div class="title">预设</div>
+      <div class="title">预设<HelpTip tip="内置三套默认规则，外加从复盘学习出的规则。切换预设会整体替换下方参数，可随时切回默认。" /></div>
       <el-radio-group :model-value="rules.id" @change="applyPreset">
         <el-radio-button v-for="p in presets" :key="p.id" :value="p.id">
           {{ p.name }}
@@ -60,7 +61,7 @@ function applyPreset(id: unknown) {
     </div>
 
     <div class="block">
-      <div class="title">维度权重</div>
+      <div class="title">维度权重<HelpTip tip="5 个维度在总分里的相对重要性（0–5）。权重越大，该维度对最终得分影响越强。建议合计保持合理比例，学习产物会自动调整这些值。" /></div>
       <div class="weights">
         <div v-for="d in DIMENSIONS" :key="d" class="weight">
           <span>{{ DIMENSION_LABELS[d] }}</span>
@@ -78,7 +79,7 @@ function applyPreset(id: unknown) {
     </div>
 
     <div class="block">
-      <div class="title">竞争强度参数</div>
+      <div class="title">竞争强度参数<HelpTip tip="竞争维度的基础分，以及每个竞品、每单位评分带来的扣分。竞品越多、评分越高，竞争维度得分越低。" /></div>
       <div class="weights">
         <div class="weight">
           <span>基准分</span>
@@ -117,7 +118,7 @@ function applyPreset(id: unknown) {
     </div>
 
     <div class="block">
-      <div class="title">差异化参数</div>
+      <div class="title">差异化参数<HelpTip tip="差异化维度的基础分，以及挖掘出的每条用户痛点带来的加分。痛点越具体，差异化得分越高。" /></div>
       <div class="weights">
         <div class="weight">
           <span>基础分</span>
@@ -145,7 +146,7 @@ function applyPreset(id: unknown) {
     </div>
 
     <div class="block">
-      <div class="title">趋势词（命中即加分）</div>
+      <div class="title">趋势词（命中即加分）<HelpTip tip="在评论/Listing 中命中这些词即视为有趋势热度，加趋势基础分并按命中数累加。按你的类目补充热词。" /></div>
       <div class="kws">
         <el-tag
           v-for="k in rules.trend.keywords"
@@ -191,7 +192,7 @@ function applyPreset(id: unknown) {
     </div>
 
     <div class="block">
-      <div class="title">市场容量档位（评论总数 ≥ 阈值时取分）</div>
+      <div class="title">市场容量档位（评论总数 ≥ 阈值时取分）<HelpTip tip="按竞品评论总数划分市场容量等级：评论越多代表盘子越大。达到对应阈值即取该档得分，最后一行是兜底分。" placement="top-start" /></div>
       <el-table :data="rules.market.tiers" size="small" border>
         <el-table-column label="阈值" width="140">
           <template #default="{ row, $index }">
@@ -223,7 +224,7 @@ function applyPreset(id: unknown) {
     </div>
 
     <div class="block">
-      <div class="title">利润空间档位（毛利率 ≥ 阈值时取分）</div>
+      <div class="title">利润空间档位（毛利率 ≥ 阈值时取分）<HelpTip tip="按估算毛利率划分利润等级：毛利率越高得分越高。阈值用 0–1 小数（如 0.4 表示 40%），最后一行是兜底分。" placement="top-start" /></div>
       <el-table :data="rules.margin.tiers" size="small" border>
         <el-table-column label="阈值" width="140">
           <template #default="{ row, $index }">
