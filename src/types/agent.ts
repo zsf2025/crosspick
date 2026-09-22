@@ -111,7 +111,38 @@ export interface AgentOutput {
   aborted?: boolean
   /** 命中提示词注入等护栏告警的标签（输入侧检测，喂给模型前已中和） */
   guardrails?: string[]
+  /**
+   * 质量评估（LLM-as-judge）：模型按 rubric 对本轮回答打分，模型不可用则回退启发式。
+   * 与 summary 一样是增益项——算不出来也不影响主结果。
+   */
+  eval?: AgentEval
   usage?: { llmCalls: number; promptChars: number; completionChars: number }
+}
+
+/** 质量评估的单个维度得分（0-100）与权重 */
+export interface EvalDimension {
+  key: string
+  label: string
+  /** 该维度得分 0-100 */
+  score: number
+  /** 该维度在总分里的权重（所有维度权重和为 1） */
+  weight: number
+}
+
+/**
+ * 质量评估结果（LLM-as-judge）。
+ * - method='heuristic'：纯函数离线打分，无需模型，始终可用；
+ * - method='llm'：模型按 rubric 打分，模型不可用或解析失败时回退 heuristic。
+ */
+export interface AgentEval {
+  /** 加权总分 0-100 */
+  total: number
+  /** 等级：A(≥85) / B(≥70) / C(≥55) / D(<55) */
+  grade: 'A' | 'B' | 'C' | 'D'
+  dimensions: EvalDimension[]
+  method: 'heuristic' | 'llm'
+  /** 改进建议（中文） */
+  notes: string[]
 }
 
 export function emptyUsage() {

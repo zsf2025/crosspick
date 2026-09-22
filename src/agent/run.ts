@@ -17,6 +17,7 @@ import type { ChatMessage, ChatOptions, LLMProvider, ToolCallDef, ToolCallResult
 import { NullProvider } from './core/llm'
 import { sanitizeQuery, detectInjection } from './guardrails'
 import { isAbort } from './core/errors'
+import { evaluateOutput, llmEvaluate } from './eval'
 
 export function genId(prefix = 'a'): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -106,6 +107,8 @@ export interface RunOptions {
   onSummaryDelta?: (chunk: string) => void
   /** 取消信号：用户中止时立即停止编排与网络请求 */
   signal?: AbortSignal
+  /** 质量评估（LLM-as-judge）：默认开启；模型不可用会安静回退到启发式打分 */
+  evaluate?: boolean
 }
 
 export interface RunOutcome {
@@ -149,24 +152,22 @@ export async function runAgent(opts: RunOptions): Promise<RunOutcome> {
 
   if (routed.action === 'clarify') {
     tracer.final('需要用户补充信息')
-    return {
-      output: {
-        id,
-        createdAt,
-        query,
-        action: 'clarify',
-        routedBy: routed.routedBy,
-        targetId: routed.targetId,
-        reasoning: ['无法确定意图，需要追问'],
-        candidates: opts.candidates,
-        warnings: [CLARIFY_HINT],
-        trace: tracer.steps,
-        toolCalls: tracer.toolCalls,
-        usage: tracer.usage,
-      },
-      mutations,
-      memory,
+    const clarified: AgentOutput = {
+      id,
+      createdAt,
+      query,
+      action: 'clarify',
+      routedBy: routed.routedBy,
+      targetId: routed.targetId,
+      reasoning: ['无法确定意图，需要追问'],
+      candidates: opts.candidates,
+      warnings: [CLARIFY_HINT],
+      trace: tracer.steps,
+      toolCalls: tracer.toolCalls,
+      usage: tracer.usage,
     }
+    clarified.eval = evaluateOutput(clarified, { query, candidates: opts.candidates })
+    return { output: clarified, mutations, memory }
   }
 
   const ctx: ToolContext = {
@@ -253,32 +254,37 @@ export async function runAgent(opts: RunOptions): Promise<RunOutcome> {
 
   memory.push({ query, action: routed.action, targetId: routed.targetId })
 
-  return {
-    output: {
-      id,
-      createdAt,
-      query,
-      action: routed.action,
-      routedBy: routed.routedBy,
-      targetId: routed.targetId,
-      reasoning,
-      summary: modelSummary,
-      candidates: executed.merged.candidates ?? opts.candidates,
-      pricing: executed.merged.pricing,
-      review: executed.merged.review,
-      comparison: executed.merged.comparison,
-      report: executed.merged.report,
-      mutations,
-      warnings: [...executed.warnings, ...(aborted ? ['已取消'] : [])],
-      reflection: executed.reflection,
-      aborted: aborted || undefined,
-      guardrails: guardFlags.length ? guardFlags : undefined,
-      trace: tracer.steps,
-      toolCalls: executed.toolCalls as ToolCallRecord[],
-      usage: tracer.usage,
-    },
+  const output: AgentOutput = {
+    id,
+    createdAt,
+    query,
+    action: routed.action,
+    routedBy: routed.routedBy,
+    targetId: routed.targetId,
+    reasoning,
+    summary: modelSummary,
+    candidates: executed.merged.candidates ?? opts.candidates,
+    pricing: executed.merged.pricing,
+    review: executed.merged.review,
+    comparison: executed.merged.comparison,
+    report: executed.merged.report,
     mutations,
-    memory,
+    warnings: [...executed.warnings, ...(aborted ? ['已取消'] : [])],
+    reflection: executed.reflection,
+    aborted: aborted || undefined,
+    guardrails: guardFlags.length ? guardFlags : undefined,
+    trace: tracer.steps,
+    toolCalls: executed.toolCalls as ToolCallRecord[],
+    usage: tracer.usage,
   }
+
+  // 质量评估（LLM-as-judge）：模型可用时让模型按 rubric 打分，失败/不可用则回退到
+  // 纯函数启发式打分——它总能在没有模型的情况下给出质量分，是增益项而非必需项。
+  output.eval =
+    opts.evaluate !== false
+      ? await llmEvaluate(query, output, opts.candidates, { llm, tracer, signal: opts.signal })
+      : evaluateOutput(output, { query, candidates: opts.candidates })
+
+  return { output, mutations, memory }
 }
 

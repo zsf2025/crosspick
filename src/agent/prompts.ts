@@ -143,3 +143,29 @@ export function briefCandidateList(list: ProductCandidate[], limit = 20): string
     .map((c, i) => `${i + 1}. ${c.name}（${c.category}，成本 $${c.cost}）`)
     .join('\n')
 }
+
+/**
+ * 质量评估提示词（LLM-as-judge）：让模型扮演选品质检员，按 5 个维度给本轮回答打分。
+ * 与收尾总结的区别——总结是"把结果说清楚"，评估是"结果好不好"，两者都只在主结果得出后做。
+ * 触发词 EVAL_MARK 用于测试识别这是评估请求，避免与反思/总结混淆。
+ */
+export const EVAL_MARK = '质量质检员'
+
+export const EVAL_PROMPT = (query: string, action: string, digest: string) =>
+  `${EVAL_MARK}：请对选品助手本轮回答的质量按 5 个维度各打 0-100 分，并给出最多 3 条中文改进建议。
+
+用户原始问题：${query}
+助手判定的意图：${action}
+
+助手本轮产出摘要：
+${digest}
+
+评分维度：
+- relevance（切题度）：回答是否切中用户问题
+- target（目标命中）：用户点名的商品（如有）是否被重点处理
+- tooling（工具使用）：是否调用了合适的工具来获得数据
+- groundedness（有据可依）：结论是否基于真实数据，而非空泛
+- completeness（完整度）：回答是否完整、未被中断、告警少
+
+只输出 JSON，不要任何解释文字：
+{"dimensions":{"relevance":0,"target":0,"tooling":0,"groundedness":0,"completeness":0},"notes":["建议1","建议2"]}`

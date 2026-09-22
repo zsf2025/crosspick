@@ -22,6 +22,7 @@ import './store.test'
 import './eval.test'
 import './learning.test'
 import './dataio.test'
+import './quality.test'
 import './llm.test'
 import './agent-cancel.test'
 

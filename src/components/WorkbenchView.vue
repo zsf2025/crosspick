@@ -56,6 +56,25 @@ const routeLabel = computed(() =>
     : '',
 )
 
+/** 质量评估标签颜色与 hover 说明（LLM-as-judge 结果，模型不可用则为启发式） */
+const evalTagType = computed<'success' | 'warning' | 'danger'>(() => {
+  const g = lastOutput.value?.eval?.grade
+  if (g === 'A' || g === 'B') return 'success'
+  if (g === 'C') return 'warning'
+  return 'danger'
+})
+function gradeClass(g: string): string {
+  return `is-${g}`
+}
+function dimClass(score: number): string {
+  return score >= 85 ? 'is-good' : score >= 60 ? 'is-mid' : 'is-low'
+}
+const evalTip = computed(() => {
+  const e = lastOutput.value?.eval
+  if (!e) return ''
+  return `质量评估方法：${e.method === 'llm' ? '模型评估' : '启发式评估'}（总分 ${e.total}/100，等级 ${e.grade}）`
+})
+
 /** 执行中显示流式总结，执行完显示落库的那句；两者不会同时出现 */
 const summaryText = computed(() =>
   loading.value ? streamingSummary.value : lastOutput.value?.summary ?? '',
@@ -245,6 +264,11 @@ const recentHistory = computed(() => history.value.slice(-6).reverse())
               · 补调 {{ lastOutput.reflection.addedTools.join('、') }}
             </span>
           </el-tag>
+          <el-tooltip v-if="lastOutput.eval" :content="evalTip" placement="bottom">
+            <el-tag size="small" :type="evalTagType">
+              质量 {{ lastOutput.eval.grade }} · {{ lastOutput.eval.total }}
+            </el-tag>
+          </el-tooltip>
         </div>
       </div>
 
@@ -264,6 +288,24 @@ const recentHistory = computed(() => history.value.slice(-6).reverse())
               <div v-if="summaryText" class="model-summary">
                 <span class="model-summary-tag">模型总结</span>
                 <span class="model-summary-txt">{{ summaryText }}</span>
+              </div>
+              <div v-if="lastOutput.eval" class="eval-box">
+                <div class="eval-head">
+                  <span class="eval-grade" :class="gradeClass(lastOutput.eval.grade)">{{ lastOutput.eval.grade }}</span>
+                  <span class="eval-score">{{ lastOutput.eval.total }}<i>/100</i></span>
+                  <span class="eval-method">{{ lastOutput.eval.method === 'llm' ? '模型评估' : '启发式评估' }}</span>
+                </div>
+                <div class="eval-dims">
+                  <div v-for="d in lastOutput.eval.dimensions" :key="d.key" class="eval-dim">
+                    <span class="eval-dim-name">{{ d.label }}</span>
+                    <span class="eval-dim-bar"><i :style="{ width: d.score + '%' }" :class="dimClass(d.score)"></i></span>
+                    <span class="eval-dim-score">{{ d.score }}</span>
+                  </div>
+                </div>
+                <div v-if="lastOutput.eval.notes.length" class="eval-notes">
+                  <span class="eval-notes-ico">i</span>
+                  <span>{{ lastOutput.eval.notes.join('；') }}</span>
+                </div>
               </div>
               <div v-if="lastOutput.warnings.length" class="warn">
                 {{ lastOutput.warnings.join('；') }}
@@ -709,6 +751,58 @@ const recentHistory = computed(() => history.value.slice(-6).reverse())
   height: 6px;
   border-radius: 50%;
   background: var(--cp-danger);
+}
+
+/* —— 质量评估卡 —— */
+.eval-box {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: #fafbff;
+  border: 1px solid var(--cp-border);
+  border-radius: 10px;
+}
+.eval-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.eval-grade {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: #fff;
+}
+.eval-grade.is-A { background: #00a854; }
+.eval-grade.is-B { background: #36b37e; }
+.eval-grade.is-C { background: #ff991f; }
+.eval-grade.is-D { background: #f5483b; }
+.eval-score { font-size: 18px; font-weight: 700; color: var(--cp-text); }
+.eval-score i { font-size: 12px; font-weight: 400; color: var(--cp-text-3); margin-left: 2px; font-style: normal; }
+.eval-method { margin-left: auto; font-size: 12px; color: var(--cp-text-3); }
+.eval-dims { display: flex; flex-direction: column; gap: 7px; }
+.eval-dim { display: flex; align-items: center; gap: 10px; }
+.eval-dim-name { flex: 0 0 60px; font-size: 12px; color: var(--cp-text-2); text-align: right; }
+.eval-dim-bar { flex: 1 1 auto; height: 6px; border-radius: 999px; background: #eef0f5; overflow: hidden; }
+.eval-dim-bar i { display: block; height: 100%; border-radius: 999px; transition: width 0.4s ease; }
+.eval-dim-bar i.is-good { background: #00a854; }
+.eval-dim-bar i.is-mid { background: #ff991f; }
+.eval-dim-bar i.is-low { background: #f5483b; }
+.eval-dim-score { flex: 0 0 28px; font-size: 12px; color: var(--cp-text-2); text-align: right; }
+.eval-notes { margin-top: 10px; display: flex; gap: 6px; align-items: flex-start; font-size: 12px; color: var(--cp-text-2); line-height: 1.6; }
+.eval-notes-ico {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--cp-info);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* —— 历史 —— */
