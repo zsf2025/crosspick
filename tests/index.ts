@@ -26,6 +26,7 @@ import './quality.test'
 import './llm.test'
 import './agent-cancel.test'
 import './tool-selection.test'
+import './function-calling.test'
 
 const code = await runAll()
 process.exit(code)

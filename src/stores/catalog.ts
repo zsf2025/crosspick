@@ -206,6 +206,7 @@ export const useCatalogStore = defineStore('catalog', () => {
         llm: provider,
         memory,
         useLlmPlanner: settings.llm.useLlmPlanner,
+        preferFunctionCalling: settings.llm.preferFunctionCalling,
         reflect: settings.llm.autonomous,
         maxRounds: settings.llm.maxRounds,
         summarize: settings.llm.summarize,

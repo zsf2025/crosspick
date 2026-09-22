@@ -126,6 +126,13 @@ function onImport(ev: Event) {
               </div>
               <el-switch v-model="settings.llm.useLlmPlanner" />
             </div>
+            <div class="set-row">
+              <div>
+                <div class="set-label">原生 function calling<HelpTip tip="开启时优先让模型走工具协议（tool_calls）选出要调用的工具，输出更规范；关闭则强制用「文本 JSON 解析」替代工具协议。部分本地小模型不支持 tool_calls，开启后会自动回退到文本解析——若你发现本地模型规划偶发失败，可关闭此项改用更稳的文本解析。" /></div>
+                <div class="set-desc">关闭则强制文本 JSON 解析，对不支持 tool_calls 的小模型更稳</div>
+              </div>
+              <el-switch v-model="settings.llm.preferFunctionCalling" />
+            </div>
           </div>
         </section>
 

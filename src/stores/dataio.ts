@@ -113,6 +113,7 @@ function normalizeLlm(llm: Partial<LlmSettings> | undefined): LlmSettings {
     cloudApiKey: '',
     cloudModel: 'gpt-4o-mini',
     useLlmPlanner: false,
+    preferFunctionCalling: true,
     stream: true,
     autonomous: false,
     maxRounds: 2,

@@ -29,6 +29,8 @@ export interface ToolContext {
   mutate: (productId: string, kind: string, value: string) => void
   /** 取消信号：编排层在每步前检查，用户中止时立即停手 */
   signal?: AbortSignal
+  /** 原生 function calling：开启时优先走工具协议（tool_calls），关闭则强制文本 JSON 解析。默认开启 */
+  preferFunctionCalling?: boolean
 }
 
 export interface ToolResult {

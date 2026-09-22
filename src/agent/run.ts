@@ -92,6 +92,8 @@ export interface RunOptions {
   registry?: ToolRegistry
   /** 打开后由模型决定工具序列；默认关闭，保证小模型下结果稳定 */
   useLlmPlanner?: boolean
+  /** 原生 function calling：默认开启，优先让模型走工具协议（tool_calls），关闭则强制文本 JSON 解析 */
+  preferFunctionCalling?: boolean
   /** 打开观察—反思循环：执行完让模型判断是否答足，不够则补调工具；默认关闭 */
   reflect?: boolean
   /** 反思循环最多补几轮，默认 2 */
@@ -189,6 +191,7 @@ export async function runAgent(opts: RunOptions): Promise<RunOutcome> {
     },
     onDelta: opts.onDelta,
     signal: opts.signal,
+    preferFunctionCalling: opts.preferFunctionCalling ?? true,
   }
 
   const plan = opts.useLlmPlanner

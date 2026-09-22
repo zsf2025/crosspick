@@ -119,27 +119,30 @@ export async function llmPlan(
   }
   const names = registry.names().join(', ')
   const prompt = PLAN_PROMPT(action, ctx.query, names, memory.summary())
-  // 优先走原生 function calling：模型直接选出工具，arguments 由 API 保证合法
-  try {
-    const res = await ctx.llm.chatTools([{ role: 'user', content: prompt }], [PLAN_TOOL], {
-      temperature: 0,
-      signal: ctx.signal,
-    })
-    if (res.tool && res.tool.name === 'run_plan') {
-      const steps = Array.isArray(res.tool.args.steps)
-        ? res.tool.args.steps.filter((s): s is string => typeof s === 'string')
-        : []
-      const valid = steps
-        .filter(n => registry.has(n))
-        // 规则路径会把 targetId 写进 args；模型规划路径丢过 args，这里补回来，保证两条路径行为一致
-        .map(n => ({ tool: n, args: ctx.targetId ? { targetId: ctx.targetId } : {} }))
-      if (valid.length) {
-        ctx.tracer.thought('模型给出执行计划', valid.map(s => s.tool).join(' → '))
-        return { steps: valid, planner: 'llm' }
+  // 优先走原生 function calling：模型直接选出工具，arguments 由 API 保证合法。
+  // 设置关闭时跳过，直接走文本 JSON 解析（兼容性最好、对不支持 tool_calls 的小模型更稳）。
+  if (ctx.preferFunctionCalling !== false) {
+    try {
+      const res = await ctx.llm.chatTools([{ role: 'user', content: prompt }], [PLAN_TOOL], {
+        temperature: 0,
+        signal: ctx.signal,
+      })
+      if (res.tool && res.tool.name === 'run_plan') {
+        const steps = Array.isArray(res.tool.args.steps)
+          ? res.tool.args.steps.filter((s): s is string => typeof s === 'string')
+          : []
+        const valid = steps
+          .filter(n => registry.has(n))
+          // 规则路径会把 targetId 写进 args；模型规划路径丢过 args，这里补回来，保证两条路径行为一致
+          .map(n => ({ tool: n, args: ctx.targetId ? { targetId: ctx.targetId } : {} }))
+        if (valid.length) {
+          ctx.tracer.thought('模型给出执行计划', valid.map(s => s.tool).join(' → '))
+          return { steps: valid, planner: 'llm' }
+        }
       }
+    } catch {
+      /* 落到文本兜底 */
     }
-  } catch {
-    /* 落到文本兜底 */
   }
   // 文本 JSON 兜底（兼容不提供 function calling 的模型 / 测试桩）
   try {
@@ -309,29 +312,32 @@ export async function reflectNext(
   const digest =
     digestOverride ??
     executed.map((e, i) => `${i + 1}. ${e.tool} → ${e.message || '（无文字产出）'}`).join('\n')
-  // 原生 function calling：模型直接返回 {done, next}，避免文本解析偏差
-  try {
-    const res = await ctx.llm.chatTools(
-      [{ role: 'user', content: REFLECT_PROMPT(ctx.query, allowed.join(', '), digest) }],
-      [REFLECT_TOOL],
-      { temperature: 0, signal: ctx.signal },
-    )
-    if (res.tool && res.tool.name === 'reflect_decision') {
-      const done = res.tool.args.done === true
-      const list = Array.isArray(res.tool.args.next)
-        ? res.tool.args.next.filter((s): s is string => typeof s === 'string')
-        : []
-      const next: Step[] = []
-      for (const name of list) {
-        if (next.length >= MAX_NEXT_PER_ROUND) break
-        if (!allowed.includes(name) || executed.some(e => e.tool === name) || next.some(s => s.tool === name))
-          continue
-        next.push({ tool: name, args: {} })
+  // 原生 function calling：模型直接返回 {done, next}，避免文本解析偏差。
+  // 设置关闭时跳过，直接走文本 JSON 兜底。
+  if (ctx.preferFunctionCalling !== false) {
+    try {
+      const res = await ctx.llm.chatTools(
+        [{ role: 'user', content: REFLECT_PROMPT(ctx.query, allowed.join(', '), digest) }],
+        [REFLECT_TOOL],
+        { temperature: 0, signal: ctx.signal },
+      )
+      if (res.tool && res.tool.name === 'reflect_decision') {
+        const done = res.tool.args.done === true
+        const list = Array.isArray(res.tool.args.next)
+          ? res.tool.args.next.filter((s): s is string => typeof s === 'string')
+          : []
+        const next: Step[] = []
+        for (const name of list) {
+          if (next.length >= MAX_NEXT_PER_ROUND) break
+          if (!allowed.includes(name) || executed.some(e => e.tool === name) || next.some(s => s.tool === name))
+            continue
+          next.push({ tool: name, args: {} })
+        }
+        return { done: done || next.length === 0, next }
       }
-      return { done: done || next.length === 0, next }
+    } catch {
+      /* 落到文本兜底 */
     }
-  } catch {
-    /* 落到文本兜底 */
   }
   // 文本 JSON 兜底
   try {

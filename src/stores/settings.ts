@@ -25,6 +25,8 @@ export interface LlmSettings {
   cloudApiKey: string
   cloudModel: string
   useLlmPlanner: boolean
+  /** 原生 function calling：开启时优先让模型走工具协议（tool_calls），不支持的模型自动回退文本 JSON；关闭则强制文本 JSON 解析 */
+  preferFunctionCalling: boolean
   stream: boolean
   /** 观察—反思循环：执行完让模型判断是否补调工具 */
   autonomous: boolean
@@ -42,6 +44,7 @@ const DEFAULT_LLM: LlmSettings = {
   cloudApiKey: '',
   cloudModel: 'gpt-4o-mini',
   useLlmPlanner: false,
+  preferFunctionCalling: true,
   stream: true,
   autonomous: false,
   maxRounds: 2,
