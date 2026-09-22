@@ -1,0 +1,138 @@
+/* =========================================================
+   CrossPick · 电商风格设计系统
+   品牌色 / 设计令牌 / Element Plus 主题覆盖 / 基础排版
+   ========================================================= */
+:root {
+  /* —— 品牌（跨境选品：活力橙，commerce energy + 可信） —— */
+  --cp-brand: #ff6a00;
+  --cp-brand-2: #ff9a3d;
+  --cp-brand-dark: #e25c00;
+  --cp-brand-soft: #fff1e8;
+  --cp-brand-grad: linear-gradient(135deg, #ff6a00 0%, #ff9a3d 100%);
+
+  /* —— 中性色 —— */
+  --cp-bg: #f4f6fb;
+  --cp-surface: #ffffff;
+  --cp-surface-2: #fbfcfe;
+  --cp-border: #e9ecf2;
+  --cp-border-strong: #dce0e8;
+
+  /* —— 文本 —— */
+  --cp-text: #1d2129;
+  --cp-text-2: #4e5969;
+  --cp-text-3: #86909c;
+
+  /* —— 语义色 —— */
+  --cp-success: #00b42a;
+  --cp-warning: #ff7d00;
+  --cp-danger: #f53f3f;
+  --cp-info: #165dff;
+
+  /* —— 阴影 / 圆角 —— */
+  --cp-shadow-sm: 0 1px 2px rgba(20, 30, 60, 0.04), 0 2px 8px rgba(20, 30, 60, 0.05);
+  --cp-shadow: 0 6px 20px rgba(20, 30, 60, 0.08);
+  --cp-shadow-lg: 0 12px 32px rgba(20, 30, 60, 0.12);
+  --cp-radius: 14px;
+  --cp-radius-sm: 10px;
+  --cp-radius-xs: 8px;
+
+  /* —— Element Plus 主题覆盖 —— */
+  --el-color-primary: #ff6a00;
+  --el-color-primary-light-3: #ff8a3d;
+  --el-color-primary-light-5: #ffa969;
+  --el-color-primary-light-7: #ffc79c;
+  --el-color-primary-light-8: #ffd7b8;
+  --el-color-primary-light-9: #fff1e8;
+  --el-color-primary-dark-2: #e25c00;
+  --el-color-success: #00b42a;
+  --el-color-warning: #ff7d00;
+  --el-color-danger: #f53f3f;
+  --el-color-error: #f53f3f;
+  --el-color-info: #165dff;
+  --el-border-radius-base: 10px;
+  --el-border-radius-small: 8px;
+  --el-font-size-base: 13px;
+  --el-text-color-primary: #1d2129;
+  --el-text-color-regular: #4e5969;
+  --el-border-color: #e9ecf2;
+  --el-border-color-light: #eef1f6;
+  --el-fill-color-blank: #ffffff;
+}
+
+/* —— 基础排版 —— */
+html,
+body,
+#app {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--cp-bg);
+  color: var(--cp-text);
+  font-family: 'PingFang SC', 'Microsoft YaHei', system-ui, 'Segoe UI', Roboto, Helvetica, Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+* {
+  box-sizing: border-box;
+}
+::selection {
+  background: rgba(255, 106, 0, 0.18);
+}
+/* 细滚动条，贴近 SaaS 产品观感 */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #d6dae2;
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #c2c7d1;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* —— 通用卡片（被各组件复用） —— */
+.cp-card {
+  background: var(--cp-surface);
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  box-shadow: var(--cp-shadow-sm);
+}
+.cp-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--cp-border);
+}
+/* 标题组：让「标题」与「说明」之间留出呼吸间距
+   （Vue 编译会移除两个 span 之间的空白，必须靠 CSS 补间距） */
+.cp-card-head > div:first-child {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+}
+.cp-card-head .t {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--cp-text);
+  line-height: 1.4;
+}
+.cp-card-head .s {
+  font-size: 12px;
+  color: var(--cp-text-3);
+  line-height: 1.4;
+  /* 说明换行时不与标题粘连 */
+  padding-bottom: 1px;
+}
+.cp-card-body {
+  padding: 18px 20px;
+}
