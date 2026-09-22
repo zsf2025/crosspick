@@ -1,6 +1,6 @@
 import type { Tool } from '../core/tool'
 import type { ReviewAnalysis } from '@/types/agent'
-import { REVIEW_PROMPT, REVIEW_STREAM_PROMPT } from '../prompts'
+import { REVIEW_PROMPT, REVIEW_STREAM_PROMPT, withSystem } from '../prompts'
 
 /**
  * 评论洞察：LLM 真正发挥作用的地方。
@@ -36,12 +36,9 @@ export const reviewTool: Tool = {
     if (painPoints.length && ctx.onDelta && (await ctx.llm.health())) {
       try {
         const text = await ctx.llm.stream(
-          [
-            {
-              role: 'user',
-              content: REVIEW_STREAM_PROMPT(target.name, painPoints.map(p => `${p.text}（${p.mentions} 次提及）`), positives),
-            },
-          ],
+          withSystem(
+            REVIEW_STREAM_PROMPT(target.name, painPoints.map(p => `${p.text}（${p.mentions} 次提及）`), positives),
+          ),
           { temperature: 0.3 },
           chunk => ctx.onDelta?.(chunk),
         )

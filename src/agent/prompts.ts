@@ -1,5 +1,6 @@
 import type { AgentAction } from '@/types/agent'
 import type { ProductCandidate } from '@/types/product'
+import type { ChatMessage } from './core/llm'
 
 /**
  * Prompt 集中管理。
@@ -7,8 +8,33 @@ import type { ProductCandidate } from '@/types/product'
  * 和逻辑混在一起会导致每次调 prompt 都要改代码、也无法做 eval 对比。
  */
 
+/**
+ * 共享人格（system 角色）。所有面向模型的请求都先带这一段，
+ * 这样"身份 + 输出纪律"只在一处维护，各业务 prompt 不必重复声明，
+ * 改人格也只需改这里一处。
+ *
+ * 说明：本项目的收益主要是「人格统一 + prompt 可维护性」，而非 token ——
+ * Ollama 本地单轮不跨请求缓存 system，每次请求仍会带上这段；
+ * 但它让每条业务 prompt 都无需再重复身份/约束句，改一处即可全局生效。
+ */
+export const AGENT_SYSTEM = `你是 CrossPick 的跨境电商 AI 选品助手。你的目标是通过数据帮助卖家完成选品决策，包括评分排序、定价测算、评论洞察、横向对比、生成选品报告、淘汰与标记候选品。
+
+工作原则：
+- 基于已给出的数据做判断，不要编造候选品列表或数字。
+- 需要结构化结果时只输出合法 JSON，不要包含任何解释文字、Markdown 代码块或多余标点。
+- 自由文本回答要简洁、直接给结论，不复述已给数据。
+- 不确定或数据不足时，明确说明"数据不足"，不要为了完整而硬编。`
+
+/** 把共享人格与业务指令组装成合法的 messages 数组 */
+export function withSystem(userContent: string): ChatMessage[] {
+  return [
+    { role: 'system', content: AGENT_SYSTEM },
+    { role: 'user', content: userContent },
+  ]
+}
+
 export const CLASSIFY_PROMPT = (query: string, memorySummary: string) =>
-  `你是一个跨境电商选品助手。请判断用户意图属于以下哪一类，只输出一个英文单词：
+  `请判断用户意图属于以下哪一类，只输出一个英文单词：
 - score：对候选品进行评分或排序
 - price：对某个商品进行定价或利润测算
 - review：分析用户评论痛点
@@ -75,7 +101,7 @@ ${notes.join('\n')}
 export const REFLECT_MARK = '已经执行过的步骤与产出'
 
 export const REFLECT_PROMPT = (query: string, toolNames: string, done: string) =>
-  `你是跨境电商选品助手，请判断当前结果是否已经能回答用户的问题。
+  `请判断当前结果是否已经能回答用户的问题。
 
 用户问题：${query}
 
@@ -98,7 +124,7 @@ export const SUMMARY_MARK = '请基于以下已得出的分析结果'
  * 与反思的区别——反思决定"还要不要再做"，总结只负责"把已有结果说清楚"。
  */
 export const SUMMARY_PROMPT = (query: string, digest: string) =>
-  `你是跨境电商选品顾问。${SUMMARY_MARK}，用一句话给出你的判断和建议。
+  `${SUMMARY_MARK}，用一句话给出你的判断和建议。
 
 用户的原始问题：${query}
 

@@ -4,7 +4,7 @@ import type { ToolContext, ToolResult } from './tool'
 import type { ToolRegistry } from './registry'
 import { extractJson } from './llm'
 import type { ConversationMemory } from './memory'
-import { PLAN_PROMPT, REFLECT_PROMPT } from '../prompts'
+import { PLAN_PROMPT, REFLECT_PROMPT, withSystem } from '../prompts'
 
 export interface Step {
   tool: string
@@ -245,7 +245,7 @@ export async function reflectNext(
     executed.map((e, i) => `${i + 1}. ${e.tool} → ${e.message || '（无文字产出）'}`).join('\n')
   try {
     const raw = await ctx.llm.chat(
-      [{ role: 'user', content: REFLECT_PROMPT(ctx.query, allowed.join(', '), digest) }],
+      withSystem(REFLECT_PROMPT(ctx.query, allowed.join(', '), digest)),
       { temperature: 0 },
     )
     return parseReflection(raw, allowed, executed.map(e => e.tool))

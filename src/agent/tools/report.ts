@@ -4,7 +4,7 @@ import type { ReportSection } from '@/types/agent'
 import { scoreCandidates, missingDimensions } from '@/domain/scoring'
 import { suggestPricing } from '@/domain/pricing'
 import { DIMENSION_LABELS } from '@/types/product'
-import { REPORT_PROMPT } from '../prompts'
+import { REPORT_PROMPT, withSystem } from '../prompts'
 
 function overview(candidates: ProductCandidate[]): string {
   const scored = candidates.filter(c => c.totalScore !== null)
@@ -88,7 +88,7 @@ export const reportTool: Tool = {
         if (await ctx.llm.health()) {
           try {
             const text = await ctx.llm.chat(
-              [{ role: 'user', content: REPORT_PROMPT(focus.name, score, notes) }],
+              withSystem(REPORT_PROMPT(focus.name, score, notes)),
               { temperature: 0.3 },
             )
             if (text && text.trim()) {

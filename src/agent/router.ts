@@ -2,7 +2,7 @@ import type { AgentAction } from '@/types/agent'
 import type { ProductCandidate } from '@/types/product'
 import type { LLMProvider } from './core/llm'
 import type { ConversationMemory } from './core/memory'
-import { CLASSIFY_PROMPT, briefCandidateList } from './prompts'
+import { CLASSIFY_PROMPT, briefCandidateList, withSystem } from './prompts'
 
 /**
  * 意图路由：规则优先，模型兜底。
@@ -82,12 +82,9 @@ export async function llmPickTarget(
   if (candidates.length <= 1 || !(await llm.health())) return null
   try {
     const picked = await llm.chat(
-      [
-        {
-          role: 'user',
-          content: `候选商品：\n${briefCandidateList(candidates)}\n\n用户想针对哪一个提问？只输出序号数字，都不匹配输出 0。\n用户问题：${query}`,
-        },
-      ],
+      withSystem(
+        `候选商品：\n${briefCandidateList(candidates)}\n\n用户想针对哪一个提问？只输出序号数字，都不匹配输出 0。\n用户问题：${query}`,
+      ),
       { temperature: 0 },
     )
     const idx = parseInt(picked.trim(), 10) - 1

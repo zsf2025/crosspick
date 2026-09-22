@@ -2,7 +2,7 @@ import type { AgentAction, ComparisonResult, PricingSuggestion, ReviewAnalysis, 
 import type { ProductCandidate } from '@/types/product'
 import type { LLMProvider } from './core/llm'
 import type { Tracer } from './core/trace'
-import { SUMMARY_PROMPT } from './prompts'
+import { SUMMARY_PROMPT, withSystem } from './prompts'
 
 /**
  * 收尾总结：确定性工具跑完之后，让模型看着真实结果补一句人话结论。
@@ -122,7 +122,7 @@ export async function summarize(
     opts.tracer.thought('模型不可用，跳过收尾总结')
     return null
   }
-  const messages = [{ role: 'user' as const, content: SUMMARY_PROMPT(query, digest) }]
+  const messages = withSystem(SUMMARY_PROMPT(query, digest))
   try {
     const raw = opts.onDelta
       ? await opts.llm.stream(messages, { temperature: 0.3 }, opts.onDelta)
