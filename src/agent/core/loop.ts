@@ -2,8 +2,10 @@ import type { AgentAction, ToolCallRecord } from '@/types/agent'
 import type { ProductCandidate } from '@/types/product'
 import type { ToolContext, ToolResult } from './tool'
 import type { ToolRegistry } from './registry'
+import type { ToolCallDef } from './llm'
 import { extractJson } from './llm'
 import type { ConversationMemory } from './memory'
+import { AgentAbortError } from './errors'
 import { PLAN_PROMPT, REFLECT_PROMPT, withSystem } from '../prompts'
 
 export interface Step {
@@ -43,6 +45,36 @@ const REFLECT_BLOCKED = new Set(['mutate'])
 
 /** 反思阶段单轮最多补几个工具，防止模型一口气把所有工具都点一遍 */
 const MAX_NEXT_PER_ROUND = 2
+
+/**
+ * 原生 function calling 的「合成工具」定义。
+ * 规划/反思的两个决策点各用一个工具承接，让模型在协议层 constrained 输出，
+ * 比"吐 JSON 再解析"更稳。模型不返回 tool_call 时，loop 会回退到文本 JSON 解析。
+ */
+const PLAN_TOOL: ToolCallDef = {
+  name: 'run_plan',
+  description: '输出执行计划：按顺序列出要调用的工具名（如 score、price、review）',
+  parameters: {
+    type: 'object',
+    properties: {
+      steps: { type: 'array', items: { type: 'string' }, description: '按顺序调用的工具名' },
+    },
+    required: ['steps'],
+  },
+}
+
+const REFLECT_TOOL: ToolCallDef = {
+  name: 'reflect_decision',
+  description: '判断当前结果是否已能回答用户问题',
+  parameters: {
+    type: 'object',
+    properties: {
+      done: { type: 'boolean', description: '结果是否已足够回答' },
+      next: { type: 'array', items: { type: 'string' }, description: '还需补调的工具名' },
+    },
+    required: ['done'],
+  },
+}
 
 /** 确定性规划：每个意图对应固定的工具序列 */
 export function rulePlan(action: AgentAction, targetId: string | null): Step[] {
@@ -87,15 +119,38 @@ export async function llmPlan(
   }
   const names = registry.names().join(', ')
   const prompt = PLAN_PROMPT(action, ctx.query, names, memory.summary())
+  // 优先走原生 function calling：模型直接选出工具，arguments 由 API 保证合法
   try {
-    const raw = await ctx.llm.chatJson<{ steps?: Array<{ tool: string }> }>([
-      { role: 'user', content: prompt },
-    ], { temperature: 0 })
+    const res = await ctx.llm.chatTools([{ role: 'user', content: prompt }], [PLAN_TOOL], {
+      temperature: 0,
+      signal: ctx.signal,
+    })
+    if (res.tool && res.tool.name === 'run_plan') {
+      const steps = Array.isArray(res.tool.args.steps)
+        ? res.tool.args.steps.filter((s): s is string => typeof s === 'string')
+        : []
+      const valid = steps
+        .filter(n => registry.has(n))
+        // 规则路径会把 targetId 写进 args；模型规划路径丢过 args，这里补回来，保证两条路径行为一致
+        .map(n => ({ tool: n, args: ctx.targetId ? { targetId: ctx.targetId } : {} }))
+      if (valid.length) {
+        ctx.tracer.thought('模型给出执行计划', valid.map(s => s.tool).join(' → '))
+        return { steps: valid, planner: 'llm' }
+      }
+    }
+  } catch {
+    /* 落到文本兜底 */
+  }
+  // 文本 JSON 兜底（兼容不提供 function calling 的模型 / 测试桩）
+  try {
+    const raw = await ctx.llm.chatJson<{ steps?: Array<{ tool: string }> }>(
+      [{ role: 'user', content: prompt }],
+      { temperature: 0, signal: ctx.signal },
+    )
     const steps = Array.isArray(raw?.steps) ? raw.steps : null
     if (!steps || !steps.length) return { steps: fallback, planner: 'rule' }
     const valid = steps
       .filter(s => s && typeof s.tool === 'string' && registry.has(s.tool))
-      // 规则路径会把 targetId 写进 args；模型规划路径丢过 args，这里补回来，保证两条路径行为一致
       .map(s => ({ tool: s.tool, args: ctx.targetId ? { targetId: ctx.targetId } : {} }))
     if (!valid.length) return { steps: fallback, planner: 'rule' }
     ctx.tracer.thought('模型给出执行计划', valid.map(s => s.tool).join(' → '))
@@ -158,12 +213,23 @@ export async function executePlan(
     return produced
   }
 
-  for (const step of steps) await runOne(step)
+  for (const step of steps) {
+    // 每步前检查取消信号：用户中止时立即停手，不再发起下一轮工具调用/网络请求
+    if (ctx.signal?.aborted) {
+      ctx.tracer.warning('用户已取消，停止执行')
+      throw new AgentAbortError()
+    }
+    await runOne(step)
+  }
 
   const maxRounds = opts.reflect ? Math.max(0, opts.maxRounds ?? 2) : 0
   let rounds = 0
 
   for (let round = 0; round < maxRounds; round++) {
+    if (ctx.signal?.aborted) {
+      ctx.tracer.warning('用户已取消，结束反思循环')
+      break
+    }
     if (!(await ctx.llm.health())) {
       ctx.tracer.thought('模型不可用，结束反思循环')
       break
@@ -231,7 +297,7 @@ function buildReflectionDigest(merged: ToolResult, executed: ExecutedStep[]): st
 
 /**
  * 让模型判断是否需要补调工具。
- * 任何异常、解析失败都返回"已完成"——拿不准就停在编排的结果上，这是安全方向。
+ * 优先走原生 function calling；任何异常、解析失败都返回"已完成"——拿不准就停在编排的结果上，这是安全方向。
  */
 export async function reflectNext(
   ctx: ToolContext,
@@ -243,10 +309,35 @@ export async function reflectNext(
   const digest =
     digestOverride ??
     executed.map((e, i) => `${i + 1}. ${e.tool} → ${e.message || '（无文字产出）'}`).join('\n')
+  // 原生 function calling：模型直接返回 {done, next}，避免文本解析偏差
+  try {
+    const res = await ctx.llm.chatTools(
+      [{ role: 'user', content: REFLECT_PROMPT(ctx.query, allowed.join(', '), digest) }],
+      [REFLECT_TOOL],
+      { temperature: 0, signal: ctx.signal },
+    )
+    if (res.tool && res.tool.name === 'reflect_decision') {
+      const done = res.tool.args.done === true
+      const list = Array.isArray(res.tool.args.next)
+        ? res.tool.args.next.filter((s): s is string => typeof s === 'string')
+        : []
+      const next: Step[] = []
+      for (const name of list) {
+        if (next.length >= MAX_NEXT_PER_ROUND) break
+        if (!allowed.includes(name) || executed.some(e => e.tool === name) || next.some(s => s.tool === name))
+          continue
+        next.push({ tool: name, args: {} })
+      }
+      return { done: done || next.length === 0, next }
+    }
+  } catch {
+    /* 落到文本兜底 */
+  }
+  // 文本 JSON 兜底
   try {
     const raw = await ctx.llm.chat(
       withSystem(REFLECT_PROMPT(ctx.query, allowed.join(', '), digest)),
-      { temperature: 0 },
+      { temperature: 0, signal: ctx.signal },
     )
     return parseReflection(raw, allowed, executed.map(e => e.tool))
   } catch {

@@ -27,6 +27,8 @@ export interface ToolContext {
   onDelta?: (chunk: string) => void
   /** 允许工具修改候选品（淘汰、打标签） */
   mutate: (productId: string, kind: string, value: string) => void
+  /** 取消信号：编排层在每步前检查，用户中止时立即停手 */
+  signal?: AbortSignal
 }
 
 export interface ToolResult {

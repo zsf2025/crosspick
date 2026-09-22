@@ -1,5 +1,6 @@
 import axios from 'axios'
 import type { LlmSettings } from '@/stores/settings'
+import { isAbort } from './errors'
 
 export type ChatRole = 'system' | 'user' | 'assistant'
 
@@ -13,6 +14,8 @@ export interface ChatOptions {
   maxTokens?: number
   /** Ollama 结构化输出：传 'json' 由 API 层强制模型输出合法 JSON，几乎消灭解析重试 */
   format?: 'json'
+  /** 取消信号：透传给底层请求，用户中止时立即中断网络调用 */
+  signal?: AbortSignal
 }
 
 export interface UsageCounter {
@@ -21,10 +24,34 @@ export interface UsageCounter {
   completionChars: number
 }
 
+/**
+ * 原生 function calling 的工具定义（与 OpenAI / Ollama 的 tools 协议对齐）。
+ * 用 function calling 替代"让模型吐 JSON 再解析"，是更现代、更稳的做法：
+ * 模型在协议层 constrained 输出，arguments 由 API 保证是合法 JSON。
+ */
+export interface ToolCallDef {
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+}
+
+export interface ToolCallResult {
+  /** 模型选择调用了某个工具；name 是工具名，args 是结构化参数 */
+  tool?: { name: string; args: Record<string, unknown> }
+  /** 模型未调用工具、直接回了文本 */
+  text?: string
+}
+
 export interface LLMProvider {
   readonly name: string
   chat(messages: ChatMessage[], options?: ChatOptions): Promise<string>
   chatJson<T>(messages: ChatMessage[], options?: ChatOptions): Promise<T | null>
+  /** 原生 function calling：把工具定义交给模型，返回它选择的工具或纯文本 */
+  chatTools(
+    messages: ChatMessage[],
+    tools: ToolCallDef[],
+    options?: ChatOptions,
+  ): Promise<ToolCallResult>
   stream(
     messages: ChatMessage[],
     options: ChatOptions,
@@ -58,6 +85,59 @@ export const DEFAULT_CLOUD: CloudConfig = {
   apiKey: '',
   model: 'gpt-4o-mini',
   timeoutMs: 60000,
+}
+
+/** 指数退避重试：网络类瞬时错误自动重试，尊重 abort（被取消不再重试、直接抛出）。 */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  signal?: AbortSignal,
+  retries = 2,
+): Promise<T> {
+  let last: unknown
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    try {
+      return await fn()
+    } catch (e) {
+      if (isAbort(e)) throw e
+      last = e
+      if (attempt < retries) {
+        const base = 300 * 2 ** attempt
+        const jitter = Math.random() * 200
+        await sleep(base + jitter, signal)
+      }
+    }
+  }
+  throw last
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'))
+    const t = setTimeout(resolve, ms)
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(t)
+        reject(new DOMException('Aborted', 'AbortError'))
+      },
+      { once: true },
+    )
+  })
+}
+
+/** 把工具参数（可能是字符串/对象）收敛成普通对象，容错解析 */
+function parseArgs(raw: unknown): Record<string, unknown> {
+  if (!raw) return {}
+  if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw)
+      return p && typeof p === 'object' ? (p as Record<string, unknown>) : {}
+    } catch {
+      return {}
+    }
+  }
+  return typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
 }
 
 /** 从模型输出里剥离 ```json 代码块，再做一次 JSON.parse 尝试 */
@@ -105,6 +185,14 @@ export class OllamaProvider implements LLMProvider {
     return this.cfg
   }
 
+  /** 带重试与 signal 的统一请求入口，chat / stream / chatJson 共用 */
+  private request(path: string, body: Record<string, unknown>, signal?: AbortSignal) {
+    return withRetry(
+      () => axios.post(`${this.cfg.baseUrl}${path}`, body, { timeout: this.cfg.timeoutMs, signal }),
+      signal,
+    )
+  }
+
   async chat(messages: ChatMessage[], options: ChatOptions = {}): Promise<string> {
     const body: Record<string, unknown> = {
       model: this.cfg.model,
@@ -117,9 +205,7 @@ export class OllamaProvider implements LLMProvider {
       },
     }
     if (options.format) body.format = options.format
-    const resp = await axios.post(`${this.cfg.baseUrl}/chat`, body, {
-      timeout: this.cfg.timeoutMs,
-    })
+    const resp = await this.request('/chat', body, options.signal)
     return (resp.data?.message?.content ?? '') as string
   }
 
@@ -128,8 +214,8 @@ export class OllamaProvider implements LLMProvider {
     options: ChatOptions = {},
     onDelta: (chunk: string) => void,
   ): Promise<string> {
-    const resp = await axios.post(
-      `${this.cfg.baseUrl}/chat`,
+    const resp = await this.request(
+      '/chat',
       {
         model: this.cfg.model,
         messages,
@@ -140,11 +226,7 @@ export class OllamaProvider implements LLMProvider {
           num_ctx: 8192,
         },
       },
-      {
-        timeout: this.cfg.timeoutMs,
-        responseType: 'stream',
-        adapter: 'fetch',
-      } as never,
+      options.signal,
     )
     const reader = (resp.data as ReadableStream<Uint8Array>).getReader()
     const decoder = new TextDecoder()
@@ -171,6 +253,30 @@ export class OllamaProvider implements LLMProvider {
       }
     }
     return full
+  }
+
+  async chatTools(
+    messages: ChatMessage[],
+    tools: ToolCallDef[],
+    options: ChatOptions = {},
+  ): Promise<ToolCallResult> {
+    const body: Record<string, unknown> = {
+      model: this.cfg.model,
+      messages,
+      stream: false,
+      tools: tools.map(t => ({
+        type: 'function',
+        function: { name: t.name, description: t.description, parameters: t.parameters },
+      })),
+      options: { temperature: options.temperature ?? 0, num_predict: options.maxTokens ?? 1024, num_ctx: 8192 },
+    }
+    const resp = await this.request('/chat', body, options.signal)
+    const tcs = resp.data?.message?.tool_calls
+    if (Array.isArray(tcs) && tcs.length) {
+      const fn = tcs[0].function
+      return { tool: { name: fn.name, args: parseArgs(fn.arguments) } }
+    }
+    return { text: (resp.data?.message?.content ?? '') as string }
   }
 
   /**
@@ -227,6 +333,9 @@ export class NullProvider implements LLMProvider {
   async chatJson<T>(): Promise<T | null> {
     return null
   }
+  async chatTools(): Promise<ToolCallResult> {
+    return { text: '' }
+  }
   async stream(
     _m: ChatMessage[],
     _o: ChatOptions,
@@ -266,9 +375,21 @@ export class CloudProvider implements LLMProvider {
     return messages.map(m => ({ role: m.role, content: m.content }))
   }
 
+  private request(path: string, body: Record<string, unknown>, signal?: AbortSignal) {
+    return withRetry(
+      () =>
+        axios.post(`${this.cfg.baseUrl}${path}`, body, {
+          headers: this.headers(),
+          timeout: this.timeout,
+          signal,
+        }),
+      signal,
+    )
+  }
+
   async chat(messages: ChatMessage[], options: ChatOptions = {}): Promise<string> {
-    const resp = await axios.post(
-      `${this.cfg.baseUrl}/chat/completions`,
+    const resp = await this.request(
+      '/chat/completions',
       {
         model: this.cfg.model,
         messages: this.toMsgs(messages),
@@ -276,7 +397,7 @@ export class CloudProvider implements LLMProvider {
         max_tokens: options.maxTokens ?? 2048,
         stream: false,
       },
-      { headers: this.headers(), timeout: this.timeout },
+      options.signal,
     )
     return (resp.data?.choices?.[0]?.message?.content ?? '') as string
   }
@@ -286,8 +407,8 @@ export class CloudProvider implements LLMProvider {
     options: ChatOptions = {},
     onDelta: (chunk: string) => void,
   ): Promise<string> {
-    const resp = await axios.post(
-      `${this.cfg.baseUrl}/chat/completions`,
+    const resp = await this.request(
+      '/chat/completions',
       {
         model: this.cfg.model,
         messages: this.toMsgs(messages),
@@ -295,12 +416,7 @@ export class CloudProvider implements LLMProvider {
         max_tokens: options.maxTokens ?? 2048,
         stream: true,
       },
-      {
-        headers: this.headers(),
-        timeout: this.timeout,
-        responseType: 'stream',
-        adapter: 'fetch',
-      } as never,
+      options.signal,
     )
     const reader = (resp.data as ReadableStream<Uint8Array>).getReader()
     const decoder = new TextDecoder()
@@ -332,14 +448,43 @@ export class CloudProvider implements LLMProvider {
     return full
   }
 
+  async chatTools(
+    messages: ChatMessage[],
+    tools: ToolCallDef[],
+    options: ChatOptions = {},
+  ): Promise<ToolCallResult> {
+    const resp = await this.request(
+      '/chat/completions',
+      {
+        model: this.cfg.model,
+        messages: this.toMsgs(messages),
+        temperature: options.temperature ?? 0,
+        max_tokens: options.maxTokens ?? 1024,
+        tools: tools.map(t => ({
+          type: 'function',
+          function: { name: t.name, description: t.description, parameters: t.parameters },
+        })),
+        tool_choice: 'auto',
+      },
+      options.signal,
+    )
+    const msg = resp.data?.choices?.[0]?.message
+    const tcs = msg?.tool_calls
+    if (Array.isArray(tcs) && tcs.length) {
+      const fn = tcs[0].function
+      return { tool: { name: fn.name, args: parseArgs(fn.arguments) } }
+    }
+    return { text: (msg?.content ?? '') as string }
+  }
+
   /**
    * 结构化输出：优先用 response_format=json_object 让模型直接吐 JSON；
    * 失败再退到带"只输出 JSON"指令的纯文本 + extractJson 兜底。
    */
   async chatJson<T>(messages: ChatMessage[], options: ChatOptions = {}): Promise<T | null> {
     try {
-      const resp = await axios.post(
-        `${this.cfg.baseUrl}/chat/completions`,
+      const resp = await this.request(
+        '/chat/completions',
         {
           model: this.cfg.model,
           messages: this.toMsgs(messages),
@@ -347,7 +492,7 @@ export class CloudProvider implements LLMProvider {
           max_tokens: options.maxTokens ?? 2048,
           response_format: { type: 'json_object' },
         },
-        { headers: this.headers(), timeout: this.timeout },
+        options.signal,
       )
       const content = resp.data?.choices?.[0]?.message?.content ?? ''
       const parsed = extractJson(content)
@@ -400,9 +545,17 @@ export class FallbackProvider implements LLMProvider {
     return (await this.active()).chatJson<T>(messages, options)
   }
 
+  async chatTools(
+    messages: ChatMessage[],
+    tools: ToolCallDef[],
+    options: ChatOptions = {},
+  ): Promise<ToolCallResult> {
+    return (await this.active()).chatTools(messages, tools, options)
+  }
+
   async stream(
     messages: ChatMessage[],
-    options: ChatOptions = {},
+    options: ChatOptions,
     onDelta: (chunk: string) => void,
   ): Promise<string> {
     return (await this.active()).stream(messages, options, onDelta)

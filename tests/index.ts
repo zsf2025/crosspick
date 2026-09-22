@@ -23,6 +23,7 @@ import './eval.test'
 import './learning.test'
 import './dataio.test'
 import './llm.test'
+import './agent-cancel.test'
 
 const code = await runAll()
 process.exit(code)

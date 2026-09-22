@@ -46,6 +46,8 @@ export const useCatalogStore = defineStore('catalog', () => {
   const history = ref<AgentOutput[]>(saved?.history ?? [])
   const loading = ref(false)
   const lastError = ref('')
+  /** 当前运行的 AbortController：用户点取消时 abort，让在途的模型请求立即中断 */
+  const currentRun = ref<AbortController | null>(null)
   /** IDB 后端：首屏加载完成前禁止写入，避免空数据覆盖持久化内容 */
   const ready = ref(!isIdb)
 
@@ -191,6 +193,8 @@ export const useCatalogStore = defineStore('catalog', () => {
     const settings = useSettingsStore()
     const provider = getLLM(settings.llm)
 
+    const ac = new AbortController()
+    currentRun.value = ac
     loading.value = true
     lastError.value = ''
     try {
@@ -207,6 +211,7 @@ export const useCatalogStore = defineStore('catalog', () => {
         summarize: settings.llm.summarize,
         onDelta: settings.llm.stream ? onDelta : undefined,
         onSummaryDelta: settings.llm.stream ? onSummaryDelta : undefined,
+        signal: ac.signal,
       })
       if (outcome.output.candidates?.length) {
         candidates.value = outcome.output.candidates
@@ -225,7 +230,14 @@ export const useCatalogStore = defineStore('catalog', () => {
       return null
     } finally {
       loading.value = false
+      currentRun.value = null
     }
+  }
+
+  /** 取消当前正在进行的 Agent 运行：abort 信号会让编排层在下一步前停手并返回已产生的部分结果 */
+  function cancel() {
+    currentRun.value?.abort()
+    currentRun.value = null
   }
 
   function clearHistory() {
@@ -262,6 +274,7 @@ export const useCatalogStore = defineStore('catalog', () => {
     fillActual,
     rescore,
     run,
+    cancel,
     clearHistory,
     reset,
   }

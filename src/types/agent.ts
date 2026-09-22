@@ -107,6 +107,10 @@ export interface AgentOutput {
   toolCalls: ToolCallRecord[]
   /** 观察—反思循环的实际开销，关闭自主时为 undefined */
   reflection?: { rounds: number; addedTools: string[] }
+  /** 用户中途取消时为 true；输出是取消那一刻已产生的部分结果 */
+  aborted?: boolean
+  /** 命中提示词注入等护栏告警的标签（输入侧检测，喂给模型前已中和） */
+  guardrails?: string[]
   usage?: { llmCalls: number; promptChars: number; completionChars: number }
 }
 

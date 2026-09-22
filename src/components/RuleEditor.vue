@@ -15,6 +15,15 @@ const presets = computed<ScoringRules[]>(() => [...RULE_PRESETS, ...settings.lea
 
 const newKeyword = ref('')
 
+/** 各评分维度的含义，供悬浮提示逐项解释 */
+const DIM_TIPS: Record<string, string> = {
+  market: '市场容量维度：按竞品评论总数估算盘子大小，越大越值得进入。',
+  competition: '竞争强度维度：竞品越多越成熟，对抗越激烈，得分越低。',
+  differentiation: '差异化维度：相对竞品能讲清的卖点，痛点越具体得分越高。',
+  trend: '趋势热度维度：评论 / Listing 命中趋势词越多，得分越高。',
+  margin: '利润空间维度：估算毛利率，越厚抗风险能力越强。',
+}
+
 function patch(fn: (r: ScoringRules) => void) {
   const next = cloneRules(props.rules)
   fn(next)
@@ -64,7 +73,7 @@ function applyPreset(id: unknown) {
       <div class="title">维度权重<HelpTip tip="5 个维度在总分里的相对重要性（0–5）。权重越大，该维度对最终得分影响越强。建议合计保持合理比例，学习产物会自动调整这些值。" /></div>
       <div class="weights">
         <div v-for="d in DIMENSIONS" :key="d" class="weight">
-          <span>{{ DIMENSION_LABELS[d] }}</span>
+          <span>{{ DIMENSION_LABELS[d] }}<HelpTip :tip="DIM_TIPS[d]" /></span>
           <el-input-number
             :model-value="rules.weights[d]"
             :min="0"
@@ -82,7 +91,7 @@ function applyPreset(id: unknown) {
       <div class="title">竞争强度参数<HelpTip tip="竞争维度的基础分，以及每个竞品、每单位评分带来的扣分。竞品越多、评分越高，竞争维度得分越低。" /></div>
       <div class="weights">
         <div class="weight">
-          <span>基准分</span>
+          <span>基准分<HelpTip tip="竞争维度的起始分（中性起点）。值越高代表默认竞争越不激烈，通常 100 为中性。" /></span>
           <el-input-number
             :model-value="rules.competition.base"
             :min="0"
@@ -93,7 +102,7 @@ function applyPreset(id: unknown) {
           />
         </div>
         <div class="weight">
-          <span>每个竞品扣分</span>
+          <span>每个竞品扣分<HelpTip tip="竞品列表里每增加一个竞品，竞争维度扣的分。竞品越多，竞争越激烈、得分越低。" /></span>
           <el-input-number
             :model-value="rules.competition.perCompetitor"
             :min="0"
@@ -104,7 +113,7 @@ function applyPreset(id: unknown) {
           />
         </div>
         <div class="weight">
-          <span>评分系数</span>
+          <span>评分系数<HelpTip tip="竞品平均评分对扣分的放大倍数。竞品评分越高（越成熟），相对竞争力越弱，扣分越多。" /></span>
           <el-input-number
             :model-value="rules.competition.ratingFactor"
             :min="0"
@@ -121,7 +130,7 @@ function applyPreset(id: unknown) {
       <div class="title">差异化参数<HelpTip tip="差异化维度的基础分，以及挖掘出的每条用户痛点带来的加分。痛点越具体，差异化得分越高。" /></div>
       <div class="weights">
         <div class="weight">
-          <span>基础分</span>
+          <span>基础分<HelpTip tip="差异化维度的起始分。挖掘不到明确痛点时给的基础分。" /></span>
           <el-input-number
             :model-value="rules.differentiation.base"
             :min="0"
@@ -132,7 +141,7 @@ function applyPreset(id: unknown) {
           />
         </div>
         <div class="weight">
-          <span>每条痛点加分</span>
+          <span>每条痛点加分<HelpTip tip="从评论 / 调研中挖掘出的每条具体用户痛点带来的加分。痛点越具体，差异化越突出、得分越高。" /></span>
           <el-input-number
             :model-value="rules.differentiation.perPainPoint"
             :min="0"
@@ -167,7 +176,7 @@ function applyPreset(id: unknown) {
       </div>
       <div class="weights">
         <div class="weight">
-          <span>趋势基础分</span>
+          <span>趋势基础分<HelpTip tip="命中任一趋势词后给的基础分，代表有基本热度。" /></span>
           <el-input-number
             :model-value="rules.trend.base"
             :min="0"
@@ -178,7 +187,7 @@ function applyPreset(id: unknown) {
           />
         </div>
         <div class="weight">
-          <span>每命中加分</span>
+          <span>每命中加分<HelpTip tip="评论 / Listing 中每多命中一个趋势词额外加的分，命中越多热度越高。" /></span>
           <el-input-number
             :model-value="rules.trend.perHit"
             :min="0"

@@ -108,6 +108,8 @@ export interface SummarizeOptions {
   tracer: Tracer
   /** 流式回调：有则逐字返回，没有则一次性返回 */
   onDelta?: (chunk: string) => void
+  /** 取消信号：透传给底层请求 */
+  signal?: AbortSignal
 }
 
 /**
@@ -125,8 +127,8 @@ export async function summarize(
   const messages = withSystem(SUMMARY_PROMPT(query, digest))
   try {
     const raw = opts.onDelta
-      ? await opts.llm.stream(messages, { temperature: 0.3 }, opts.onDelta)
-      : await opts.llm.chat(messages, { temperature: 0.3 })
+      ? await opts.llm.stream(messages, { temperature: 0.3, signal: opts.signal }, opts.onDelta)
+      : await opts.llm.chat(messages, { temperature: 0.3, signal: opts.signal })
     const text = normalizeSummary(raw)
     if (!text) {
       opts.tracer.warning('模型未给出可用总结', '已忽略')

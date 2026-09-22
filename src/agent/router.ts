@@ -78,6 +78,7 @@ export async function llmPickTarget(
   query: string,
   candidates: ProductCandidate[],
   llm: LLMProvider,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   if (candidates.length <= 1 || !(await llm.health())) return null
   try {
@@ -85,7 +86,7 @@ export async function llmPickTarget(
       withSystem(
         `候选商品：\n${briefCandidateList(candidates)}\n\n用户想针对哪一个提问？只输出序号数字，都不匹配输出 0。\n用户问题：${query}`,
       ),
-      { temperature: 0 },
+      { temperature: 0, signal },
     )
     const idx = parseInt(picked.trim(), 10) - 1
     if (Number.isInteger(idx) && idx >= 0 && candidates[idx]) return candidates[idx].id
@@ -101,13 +102,14 @@ export async function llmRoute(
   candidates: ProductCandidate[],
   llm: LLMProvider,
   memory: ConversationMemory,
+  signal?: AbortSignal,
 ): Promise<RouteResult | null> {
   if (!(await llm.health())) return null
   const VALID: AgentAction[] = ['score', 'price', 'review', 'compare', 'report', 'mutate', 'clarify']
   try {
     const raw = await llm.chat(
       [{ role: 'user', content: CLASSIFY_PROMPT(query, memory.summary()) }],
-      { temperature: 0 },
+      { temperature: 0, signal },
     )
     const word = raw.trim().toLowerCase()
     const action = VALID.find(a => word === a || word.includes(a))
@@ -115,7 +117,7 @@ export async function llmRoute(
 
     const targetId =
       resolveTargetId(query, candidates, memory) ??
-      (await llmPickTarget(query, candidates, llm))
+      (await llmPickTarget(query, candidates, llm, signal))
     // 模型判"说不清"但已经锁定到某个商品时，默认按评估处理——
     // 用户提到具体商品却什么都不做，体验上比判错更糟。
     if (action === 'clarify' && targetId) {
@@ -132,16 +134,17 @@ export async function route(
   candidates: ProductCandidate[],
   llm: LLMProvider,
   memory: ConversationMemory,
+  signal?: AbortSignal,
 ): Promise<RouteResult> {
   const hit = ruleRoute(query)
   if (hit) {
     // 规则判定意图后仍可能定位不到商品（比如中文简称），这时只让模型补定位这一件事
     const targetId =
       resolveTargetId(query, candidates, memory) ??
-      (await llmPickTarget(query, candidates, llm))
+      (await llmPickTarget(query, candidates, llm, signal))
     return { action: hit, routedBy: 'rule', targetId }
   }
-  const fallback = await llmRoute(query, candidates, llm, memory)
+  const fallback = await llmRoute(query, candidates, llm, memory, signal)
   if (fallback) return fallback
   return { action: 'clarify', routedBy: 'fallback', targetId: null }
 }

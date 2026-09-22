@@ -142,9 +142,18 @@ async function analyze() {
     ElMessage.error(catalog.lastError || 'Agent 执行失败')
     return
   }
+  if (out.aborted) {
+    ElMessage.info('已取消本轮分析')
+    query.value = ''
+    return
+  }
   unviewed.value = Object.fromEntries(detailTabs.value.map(t => [t.name, true]))
   ElMessage.success(`完成：${actionLabel.value} · ${routeLabel.value}`)
   query.value = ''
+}
+
+function cancelRun() {
+  catalog.cancel()
 }
 
 function pickExample(text: string) {
@@ -184,10 +193,13 @@ const recentHistory = computed(() => history.value.slice(-6).reverse())
             @click="query = ''"
             v-html="ICON.close"
           ></button>
-          <button class="hero-btn" type="button" :disabled="loading" @click="analyze">
-            <span v-if="loading" class="hero-spin"></span>
-            <span v-else class="hero-btn-ico" v-html="ICON.spark"></span>
-            {{ loading ? '分析中' : '开始分析' }}
+          <button v-if="!loading" class="hero-btn" type="button" :disabled="loading" @click="analyze">
+            <span class="hero-btn-ico" v-html="ICON.spark"></span>
+            开始分析
+          </button>
+          <button v-else class="hero-cancel" type="button" @click="cancelRun">
+            <span class="hero-cancel-ico" v-html="ICON.close"></span>
+            取消
           </button>
         </div>
 
@@ -479,6 +491,27 @@ const recentHistory = computed(() => history.value.slice(-6).reverse())
 }
 .hero-btn:active:not(:disabled) { transform: translateY(0); }
 .hero-btn:disabled { opacity: 0.75; cursor: not-allowed; }
+
+.hero-cancel {
+  flex: 0 0 auto;
+  height: 42px;
+  padding: 0 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--cp-border-strong);
+  border-radius: 11px;
+  background: #fff;
+  color: var(--cp-text-2);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.16s;
+}
+.hero-cancel:hover { border-color: var(--cp-danger); color: var(--cp-danger); background: #fff5f5; }
+.hero-cancel-ico { display: inline-flex; width: 14px; height: 14px; }
+.hero-cancel-ico :deep(svg) { width: 14px; height: 14px; }
 .hero-btn-ico { display: inline-flex; width: 15px; height: 15px; }
 .hero-btn-ico :deep(svg) { width: 15px; height: 15px; }
 .hero-spin {

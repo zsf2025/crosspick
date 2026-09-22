@@ -50,6 +50,7 @@ function onImport(ev: Event) {
         <div class="cp-card-head">
           <div>
             <span class="t">评分规则</span>
+            <HelpTip tip="评分引擎的参数：5 个维度的权重、竞争/差异化/趋势的计算系数，以及市场容量与利润空间的档位阈值。改动后点右下角「按当前规则重算」可立即刷新所有候选品得分。" />
             <span class="s">维度权重 · 竞争 · 差异化 · 趋势 · 档位</span>
           </div>
           <el-button size="small" text @click="settings.reset()">恢复默认</el-button>
