@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { ScoringRules } from '@/domain/rules'
 import { RULE_PRESETS, cloneRules } from '@/domain/rules'
 import { DIMENSIONS, DIMENSION_LABELS } from '@/types/product'
+import { useSettingsStore } from '@/stores/settings'
 
 const props = defineProps<{ rules: ScoringRules }>()
 const emit = defineEmits<{ (e: 'update', rules: ScoringRules): void }>()
+
+const settings = useSettingsStore()
+/** 内置预设 + 从复盘学习出的规则，统一作为可切换预设展示 */
+const presets = computed<ScoringRules[]>(() => [...RULE_PRESETS, ...settings.learnedRules])
 
 const newKeyword = ref('')
 
@@ -38,7 +43,7 @@ function removeKeyword(k: string) {
 
 function applyPreset(id: unknown) {
   const key = typeof id === 'string' ? id : String(id ?? '')
-  const p = RULE_PRESETS.find(x => x.id === key)
+  const p = presets.value.find(x => x.id === key)
   if (p) emit('update', cloneRules(p))
 }
 </script>
@@ -48,7 +53,7 @@ function applyPreset(id: unknown) {
     <div class="block">
       <div class="title">预设</div>
       <el-radio-group :model-value="rules.id" @change="applyPreset">
-        <el-radio-button v-for="p in RULE_PRESETS" :key="p.id" :value="p.id">
+        <el-radio-button v-for="p in presets" :key="p.id" :value="p.id">
           {{ p.name }}
         </el-radio-button>
       </el-radio-group>

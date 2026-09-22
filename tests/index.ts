@@ -8,6 +8,7 @@ import './autonomy.test'
 import './summary.test'
 import './store.test'
 import './eval.test'
+import './learning.test'
 
 const code = await runAll()
 process.exit(code)
