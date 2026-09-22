@@ -1,5 +1,115 @@
-# Vue 3 + TypeScript + Vite
+# CrossPick · 跨境电商选品决策助手
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+CrossPick 是一个**纯前端**的跨境电商选品决策工具：用可解释的纯函数引擎给候选商品打分，用本地大模型（Ollama）做自然语言分析与复盘总结，并通过「决策复盘 → 回填实际表现 → 从复盘学习」形成**会越用越准**的闭环。
 
-Learn more about the recommended Project Setup and IDE Support in the [Vue Docs TypeScript Guide](https://vuejs.org/guide/typescript/overview.html#project-setup).
+> 定位：个人选品辅助工具 / Agent 工程学习范本。不依赖后端，数据存浏览器本地（IndexedDB），可一键导出备份。
+
+---
+
+## 功能一览
+
+- **五维评分引擎**（纯函数、可解释）：市场容量 / 竞争强度 / 差异化空间 / 利润空间 / 趋势，权重与档位可手工调。
+- **定价与 FBA 测算**：成本、重量、汇率 → 利润曲线与建议售价。
+- **Agent 工作台**：用自然语言下达指令（"帮我看看第一个品值不值得做"），由本地模型做路由 / 规划 / 工具调用 / 反思 / 总结。
+  - 路由：把用户问题定位到具体商品（避免评分后焦点错位）。
+  - 自主反思：工具跑完后让模型判断是否要补调工具（如补做竞品对比）。
+  - 收尾总结：看着工具结果补一句人话结论。
+- **候选品库**：CSV 导入、样例数据、状态/标签管理、雷达图对比。
+- **决策复盘**：把评分固化为快照，商品上架后回填真实月销/评分，验证当初判断是否准确。
+- **决策自成长**：从复盘快照（预测分 vs 实际表现）拟合出更优的维度权重，产物是一套**可逆**的规则预设，随时可切回默认。
+- **模型云端兜底**：本地 Ollama 优先；未安装/未启动时，可配置云端 API（OpenAI 兼容协议）自动接管。
+
+---
+
+## 快速开始
+
+```bash
+npm install        # 安装依赖
+npm run dev        # 本地开发，默认 http://localhost:5173
+npm run build      # 类型检查 + 生产构建
+npm run test       # 运行单元测试（167 例，纯前端、无后端依赖）
+npm run preview    # 预览生产构建
+```
+
+### 使用本地模型（默认）
+
+1. 安装并启动 [Ollama](https://ollama.com)。
+2. 拉取模型：`ollama pull qwen2.5:1.5b`（或其他兼容模型）。
+3. 打开应用 → 候选品库「载入样例」或导入 CSV → 在工作台输入指令开始分析。
+
+### 使用云端模型（兜底）
+
+设置页「模型连接」选择 **云端 / 自动兜底**，填写云端地址（如 `https://api.openai.com/v1`）、API Key、模型名。
+- **自动兜底**：本地 Ollama 不可用时自动切云端，无需手动切换。
+- 仅填了 API Key 的云端路径才会真正发起请求。
+
+---
+
+## 使用流程（决策闭环）
+
+```
+候选品评分 ──► 保存快照 ──► 上架销售 ──► 回填实际表现
+                                       │
+                          ┌────────────┴───────────┐
+                          ▼                        ▼
+                   决策复盘（对账）        从复盘学习（拟合权重）
+                                              │
+                                              ▼
+                                    新规则预设（更准）
+```
+
+1. 在候选品库评分后，进「决策复盘」保存当前评分为快照。
+2. 商品上架卖一阵后，回到同一快照**回填实际表现**（月销 / 评分）。
+3. 凑够 5 条带实际表现的快照后，点「从复盘学习」：自动拟合新权重、启用并重新算分。
+4. 在「规则与模型」页可随时把预设切回 默认 / 保守 / 激进 / 学习规则。
+
+---
+
+## 架构
+
+```
+src/
+├── domain/          纯函数业务内核（无 UI、无 LLM 依赖，可单测）
+│   ├── scoring.ts   五维评分
+│   ├── rules.ts     规则预设（默认/保守/激进）
+│   ├── pricing.ts   定价与 FBA 测算
+│   ├── fba.ts       FBA 配置
+│   └── learning.ts  决策自成长：从复盘拟合权重（非负最小二乘，只学参数不换引擎）
+├── agent/           Agent 编排
+│   ├── core/        llm（Ollama/云端/Fallback Provider）、tool、loop、memory、registry、trace
+│   ├── tools/       score / price / review / compare / report / mutate
+│   ├── router.ts    问题 → 目标商品路由
+│   ├── run.ts       Agent 主循环
+│   └── prompts.ts   系统人格 + 两段式提示
+├── stores/         Pinia 状态 + 持久化（persist.ts 抽象 IndexedDB/localStorage）
+├── components/      页面组件（工作台 / 候选库 / 复盘 / 规则编辑 / 设置 …）
+├── adapters/       CSV 解析、样例数据
+└── types/          领域类型
+```
+
+**设计原则**
+- 决策内核是纯函数 + 可解释：分数能追溯每一个维度的理由，学习只改权重参数，引擎不变。
+- 能不用 Agent 就不用 Agent：评分/定价是确定性计算，模型只负责分析与总结。
+- 存储后端抽象：浏览器用 IndexedDB，测试环境自动回退 localStorage（保证单测零改动）。
+
+---
+
+## 数据存储与备份
+
+- 数据存浏览器本地 **IndexedDB**（key：`crosspick`）。清缓存 / 换浏览器不会自动同步。
+- 设置页「数据管理」可**导出备份**（JSON 文件）与**导入恢复**，用于迁移或防丢。
+
+---
+
+## 技术栈
+
+Vue 3 · TypeScript · Vite · Pinia · Element Plus · ECharts · Ollama（本地）/ OpenAI 兼容（云端兜底）· 原生 IndexedDB。
+
+---
+
+## 已知限制
+
+- 单用户、纯前端：无多端同步、无多人协作、无后端鉴权（定位为个人工具）。
+- 决策学习只拟合**维度权重**，不学档位（tiers）阈值——小样本下档位易过拟合。
+- 成功度标签阈值（`learning.ts` 中默认 月销 300 / 评分 4.0）可在设置页调整，需按类目校准。
+- 冷启动（< 5 条带实际表现的快照）不启用学习，避免噪声拟合。

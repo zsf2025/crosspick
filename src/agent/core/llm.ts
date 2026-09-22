@@ -1,4 +1,5 @@
 import axios from 'axios'
+import type { LlmSettings } from '@/stores/settings'
 
 export type ChatRole = 'system' | 'user' | 'assistant'
 
@@ -42,6 +43,21 @@ export const DEFAULT_OLLAMA: OllamaConfig = {
   baseUrl: 'http://127.0.0.1:11434/api',
   model: 'qwen2.5:1.5b',
   timeoutMs: 180000,
+}
+
+/** 云端模型配置（OpenAI 兼容 /chat/completions 协议） */
+export interface CloudConfig {
+  baseUrl: string
+  apiKey: string
+  model: string
+  timeoutMs?: number
+}
+
+export const DEFAULT_CLOUD: CloudConfig = {
+  baseUrl: 'https://api.openai.com/v1',
+  apiKey: '',
+  model: 'gpt-4o-mini',
+  timeoutMs: 60000,
 }
 
 /** 从模型输出里剥离 ```json 代码块，再做一次 JSON.parse 尝试 */
@@ -223,14 +239,204 @@ export class NullProvider implements LLMProvider {
   }
 }
 
-let current: LLMProvider = new OllamaProvider()
+/**
+ * 云端模型 Provider（OpenAI 兼容 /chat/completions 协议）。
+ * 作为本地 Ollama 的兜底：用户配了云端地址+Key 后，本地不可用自动切过来。
+ */
+export class CloudProvider implements LLMProvider {
+  readonly name = 'cloud'
+  private cfg: CloudConfig
 
-export function getLLM(): LLMProvider {
+  constructor(cfg: CloudConfig) {
+    this.cfg = cfg
+  }
+
+  private get timeout(): number {
+    return this.cfg.timeoutMs ?? 60000
+  }
+
+  private headers() {
+    return {
+      Authorization: `Bearer ${this.cfg.apiKey}`,
+      'Content-Type': 'application/json',
+    }
+  }
+
+  private toMsgs(messages: ChatMessage[]) {
+    return messages.map(m => ({ role: m.role, content: m.content }))
+  }
+
+  async chat(messages: ChatMessage[], options: ChatOptions = {}): Promise<string> {
+    const resp = await axios.post(
+      `${this.cfg.baseUrl}/chat/completions`,
+      {
+        model: this.cfg.model,
+        messages: this.toMsgs(messages),
+        temperature: options.temperature ?? 0.2,
+        max_tokens: options.maxTokens ?? 2048,
+        stream: false,
+      },
+      { headers: this.headers(), timeout: this.timeout },
+    )
+    return (resp.data?.choices?.[0]?.message?.content ?? '') as string
+  }
+
+  async stream(
+    messages: ChatMessage[],
+    options: ChatOptions = {},
+    onDelta: (chunk: string) => void,
+  ): Promise<string> {
+    const resp = await axios.post(
+      `${this.cfg.baseUrl}/chat/completions`,
+      {
+        model: this.cfg.model,
+        messages: this.toMsgs(messages),
+        temperature: options.temperature ?? 0.2,
+        max_tokens: options.maxTokens ?? 2048,
+        stream: true,
+      },
+      {
+        headers: this.headers(),
+        timeout: this.timeout,
+        responseType: 'stream',
+        adapter: 'fetch',
+      } as never,
+    )
+    const reader = (resp.data as ReadableStream<Uint8Array>).getReader()
+    const decoder = new TextDecoder()
+    let full = ''
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        const t = line.trim()
+        if (!t.startsWith('data:')) continue
+        const data = t.slice(5).trim()
+        if (data === '[DONE]') continue
+        try {
+          const obj = JSON.parse(data)
+          const delta = obj?.choices?.[0]?.delta?.content ?? ''
+          if (delta) {
+            full += delta
+            onDelta(delta)
+          }
+        } catch {
+          /* 忽略半行 */
+        }
+      }
+    }
+    return full
+  }
+
+  /**
+   * 结构化输出：优先用 response_format=json_object 让模型直接吐 JSON；
+   * 失败再退到带"只输出 JSON"指令的纯文本 + extractJson 兜底。
+   */
+  async chatJson<T>(messages: ChatMessage[], options: ChatOptions = {}): Promise<T | null> {
+    try {
+      const resp = await axios.post(
+        `${this.cfg.baseUrl}/chat/completions`,
+        {
+          model: this.cfg.model,
+          messages: this.toMsgs(messages),
+          temperature: options.temperature ?? 0.2,
+          max_tokens: options.maxTokens ?? 2048,
+          response_format: { type: 'json_object' },
+        },
+        { headers: this.headers(), timeout: this.timeout },
+      )
+      const content = resp.data?.choices?.[0]?.message?.content ?? ''
+      const parsed = extractJson(content)
+      if (parsed !== null) return parsed as T
+    } catch {
+      /* 落到兜底 */
+    }
+    const raw = await this.chat(messages, options)
+    return extractJson(raw) as T | null
+  }
+
+  async health(): Promise<boolean> {
+    try {
+      await axios.get(this.cfg.baseUrl, {
+        headers: this.headers(),
+        timeout: 3000,
+        validateStatus: () => true,
+      })
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
+/**
+ * 自动兜底 Provider：本地 Ollama 优先，health 失败（没装/没启动）且有云端配置时，
+ * 自动切到云端。每次请求前用带缓存的 health 判断，避免无谓网络开销。
+ */
+export class FallbackProvider implements LLMProvider {
+  readonly name = 'fallback'
+  private ollama: OllamaProvider
+  private cloud: CloudProvider | null
+
+  constructor(ollama: OllamaProvider, cloud: CloudProvider | null) {
+    this.ollama = ollama
+    this.cloud = cloud
+  }
+
+  private async active(): Promise<LLMProvider> {
+    if (this.cloud && !(await this.ollama.health())) return this.cloud
+    return this.ollama
+  }
+
+  async chat(messages: ChatMessage[], options: ChatOptions = {}): Promise<string> {
+    return (await this.active()).chat(messages, options)
+  }
+
+  async chatJson<T>(messages: ChatMessage[], options: ChatOptions = {}): Promise<T | null> {
+    return (await this.active()).chatJson<T>(messages, options)
+  }
+
+  async stream(
+    messages: ChatMessage[],
+    options: ChatOptions = {},
+    onDelta: (chunk: string) => void,
+  ): Promise<string> {
+    return (await this.active()).stream(messages, options, onDelta)
+  }
+
+  async health(): Promise<boolean> {
+    if (await this.ollama.health()) return true
+    return this.cloud ? await this.cloud.health() : false
+  }
+}
+
+/** 根据设置构建 Provider：纯本地 / 纯云端 / 自动兜底 */
+export function buildFromSettings(llm: LlmSettings): LLMProvider {
+  const ollama = createOllamaProvider({ baseUrl: llm.baseUrl, model: llm.model })
+  const cloud = llm.cloudApiKey
+    ? new CloudProvider({ baseUrl: llm.cloudBaseUrl, apiKey: llm.cloudApiKey, model: llm.cloudModel })
+    : null
+  if (llm.provider === 'cloud') return cloud ?? ollama
+  if (llm.provider === 'auto') return new FallbackProvider(ollama, cloud)
+  return ollama
+}
+
+let current: LLMProvider = new OllamaProvider()
+/** 测试/调试注入的强制 Provider，优先级高于 settings 构建 */
+let forced: LLMProvider | null = null
+
+export function getLLM(llm?: LlmSettings): LLMProvider {
+  if (forced) return forced
+  if (llm) return buildFromSettings(llm)
   return current
 }
 
 export function setLLM(p: LLMProvider) {
-  current = p
+  forced = p
 }
 
 export function createOllamaProvider(cfg?: Partial<OllamaConfig>) {

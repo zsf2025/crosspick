@@ -8,11 +8,13 @@ import { parseCsvDetailed } from '@/adapters/csv'
 import { scoreCandidates } from '@/domain/scoring'
 import { ConversationMemory } from '@/agent/core/memory'
 import { runAgent, genId } from '@/agent/run'
-import { getLLM, OllamaProvider } from '@/agent/core/llm'
+import { getLLM } from '@/agent/core/llm'
 import { useSettingsStore } from './settings'
+import { readJSON, writeJSON, STORAGE_BACKEND } from './persist'
 
 const KEY = 'crosspick.catalog.v1'
 const HISTORY_LIMIT = 20
+const isIdb = STORAGE_BACKEND === 'idb'
 
 interface Persisted {
   candidates: ProductCandidate[]
@@ -20,7 +22,9 @@ interface Persisted {
   history: AgentOutput[]
 }
 
-function load(): Persisted | null {
+/** 同步首屏：仅 localStorage 后端可同步读取；IDB 后端留空，等异步 bootstrap 填充 */
+function loadSync(): Persisted | null {
+  if (isIdb) return null
   try {
     const raw = localStorage.getItem(KEY)
     if (!raw) return null
@@ -36,12 +40,14 @@ function load(): Persisted | null {
 }
 
 export const useCatalogStore = defineStore('catalog', () => {
-  const saved = load()
+  const saved = loadSync()
   const candidates = ref<ProductCandidate[]>(saved?.candidates ?? [])
   const selectedId = ref<string | null>(saved?.selectedId ?? null)
   const history = ref<AgentOutput[]>(saved?.history ?? [])
   const loading = ref(false)
   const lastError = ref('')
+  /** IDB 后端：首屏加载完成前禁止写入，避免空数据覆盖持久化内容 */
+  const ready = ref(!isIdb)
 
   /** 用 id 记录选中项而不是数组下标：评分会重排列表，下标会错位 */
   const memory = markRaw(new ConversationMemory())
@@ -49,19 +55,37 @@ export const useCatalogStore = defineStore('catalog', () => {
   watch(
     [candidates, selectedId, history],
     () => {
-      try {
-        const payload: Persisted = {
-          candidates: candidates.value,
-          selectedId: selectedId.value,
-          history: history.value.slice(-HISTORY_LIMIT),
+      if (isIdb && !ready.value) return
+      const payload: Persisted = {
+        candidates: candidates.value,
+        selectedId: selectedId.value,
+        history: history.value.slice(-HISTORY_LIMIT),
+      }
+      if (isIdb) {
+        void writeJSON(KEY, payload)
+      } else {
+        try {
+          localStorage.setItem(KEY, JSON.stringify(payload))
+        } catch {
+          /* 忽略配额错误 */
         }
-        localStorage.setItem(KEY, JSON.stringify(payload))
-      } catch {
-        /* 忽略配额错误 */
       }
     },
     { deep: true },
   )
+
+  // IDB 后端：异步首屏加载，完成后解锁写入
+  if (isIdb) {
+    void (async () => {
+      const d = await readJSON<Persisted>(KEY)
+      if (d) {
+        candidates.value = Array.isArray(d.candidates) ? d.candidates : []
+        selectedId.value = d.selectedId ?? null
+        history.value = Array.isArray(d.history) ? d.history.slice(-HISTORY_LIMIT) : []
+      }
+      ready.value = true
+    })()
+  }
 
   const selected = computed(
     () => candidates.value.find(c => c.id === selectedId.value) ?? null,
@@ -165,10 +189,7 @@ export const useCatalogStore = defineStore('catalog', () => {
       return null
     }
     const settings = useSettingsStore()
-    const provider = getLLM()
-    if (provider instanceof OllamaProvider) {
-      provider.configure({ baseUrl: settings.llm.baseUrl, model: settings.llm.model })
-    }
+    const provider = getLLM(settings.llm)
 
     loading.value = true
     lastError.value = ''

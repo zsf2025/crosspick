@@ -33,11 +33,11 @@ function fill(snapshotId: string, actual: { monthlySales?: number; rating?: numb
 
 // —— 从复盘学习：把"预测分 vs 实际表现"拟合为新权重 ——
 const report = ref<FitReport | null>(null)
-const sampleCount = computed(() => collectSamples(candidates.value).length)
+const sampleCount = computed(() => collectSamples(candidates.value, settings.learning).length)
 const canLearn = computed(() => sampleCount.value >= MIN_SAMPLES)
 
 function learn() {
-  const samples = collectSamples(candidates.value)
+  const samples = collectSamples(candidates.value, settings.learning)
   const rep = fitAndReport(samples, settings.rules, `学习规则 #${settings.learnedRules.length + 1}`)
   if (!rep) {
     ElMessage.warning(`有效样本不足（需 ≥ ${MIN_SAMPLES} 条），先多回填几条实际表现`)

@@ -1,19 +1,11 @@
 import { describe, it, assert, eq } from './harness'
 
-// store 依赖 localStorage，Node 环境里先补一个内存实现
-const memory = new Map<string, string>()
-;(globalThis as { localStorage?: unknown }).localStorage = {
-  getItem: (k: string) => memory.get(k) ?? null,
-  setItem: (k: string, v: string) => void memory.set(k, v),
-  removeItem: (k: string) => void memory.delete(k),
-  clear: () => memory.clear(),
-  key: () => null,
-  length: 0,
-}
+// localStorage 由 tests/index.ts 统一注入为内存 shim（避免多个 test 文件各自覆盖导致写入/断言错位）
 
 const { useCatalogStore } = await import('@/stores/catalog')
 const { useSettingsStore } = await import('@/stores/settings')
 const { createPinia, setActivePinia } = await import('pinia')
+const { nextTick } = await import('vue')
 const { NullProvider, setLLM } = await import('@/agent/core/llm')
 
 setLLM(new NullProvider())
@@ -165,10 +157,14 @@ describe('Store · 设置与持久化', () => {
     eq(settings.rules.id, 'default')
   })
 
-  it('规则变更会写入 localStorage', () => {
+  it('规则变更会写入 localStorage', async () => {
     const { settings } = fresh()
     settings.applyPreset('conservative')
-    assert(memory.has('crosspick.settings.v1'), '设置应被持久化')
+    await new Promise(r => setTimeout(r, 0))
+    assert(
+      localStorage.getItem('crosspick.settings.v1') !== null,
+      '设置应被持久化',
+    )
   })
 
   it('重新创建 store 时从 localStorage 恢复', () => {
