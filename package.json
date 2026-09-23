@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "vue-tsc -b",
     "test": "node scripts/run-tests.mjs",
-    "integration": "node scripts/integration-check.mjs"
+    "integration": "node scripts/integration-check.mjs",
+    "import:amazon": "node scripts/import-amazon-reviews.mjs"
   },
   "dependencies": {
     "axios": "^1.20.0",

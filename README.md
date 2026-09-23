@@ -43,6 +43,19 @@ npm run preview    # 预览生产构建
 - **自动兜底**：本地 Ollama 不可用时自动切云端，无需手动切换。
 - 仅填了 API Key 的云端路径才会真正发起请求。
 
+### 导入真实数据（Amazon Reviews 2023）
+
+内置脚本从 McAuley Lab 的公开数据集拉取一个 Amazon 类目，直接生成可导入的长表 CSV：
+
+```bash
+npm run import:amazon -- --category All_Beauty --top 6 --competitors 4
+# 产物：data/amazon-All_Beauty.csv → 应用内「导入 CSV」选择该文件
+```
+
+脚本会自动走国内镜像（`HF_MIRROR` 可覆盖），流式读取且到量即停，默认约 40 秒完成一个类目。
+
+**注意**：它只补**需求侧**字段（竞品售价、评分、评论数、评论痛点）；**采购成本**是占位估算（售价 × 0.28），必须替换成 1688 真实批发价；**月销量**沿用项目既有启发式，不是真实销量。
+
 ---
 
 ## 使用流程（决策闭环）
