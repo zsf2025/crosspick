@@ -31,6 +31,7 @@ declare module 'vue' {
     ElTag: typeof import('element-plus/es')['ElTag']
     ElTimeline: typeof import('element-plus/es')['ElTimeline']
     ElTimelineItem: typeof import('element-plus/es')['ElTimelineItem']
+    ElTooltip: typeof import('element-plus/es')['ElTooltip']
     HelpTip: typeof import('./src/components/HelpTip.vue')['default']
     PriceCurve: typeof import('./src/components/PriceCurve.vue')['default']
     ReportView: typeof import('./src/components/ReportView.vue')['default']
