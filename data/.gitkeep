@@ -1,0 +1,2 @@
+# 占位文件：让 data/ 目录本身进入版本库。
+# 目录内的实际数据文件（如 amazon-*.csv）由 npm run import:amazon 生成，已被 .gitignore 排除。
