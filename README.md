@@ -1,8 +1,15 @@
 # CrossPick · 跨境电商选品决策助手
 
+![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
+![Vue 3](https://img.shields.io/badge/Vue-3-42b883.svg)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6.svg)
+![Tests](https://img.shields.io/badge/tests-188%20passing-brightgreen.svg)
+
 CrossPick 是一个**纯前端**的跨境电商选品决策工具：用可解释的纯函数引擎给候选商品打分，用本地大模型（Ollama）做自然语言分析与复盘总结，并通过「决策复盘 → 回填实际表现 → 从复盘学习」形成**会越用越准**的闭环。
 
-> 定位：个人选品辅助工具 / Agent 工程学习范本。不依赖后端，数据存浏览器本地（IndexedDB），可一键导出备份。
+> 定位：**开源**的个人选品辅助工具 / Agent 工程学习范本。不依赖后端，数据存浏览器本地（IndexedDB），可一键导出备份。
+>
+> 它更重要的身份是一个**完整的 Agent 工程样例**：路由 → 规划 → 工具编排 → 反思 → 记忆，并配齐了中断取消、指数退避重试、提示注入护栏、LLM-as-judge 质量评估这些真实产品才需要的工程能力。想学 Agent 怎么落地，可以直接读 `src/agent/`。
 
 ---
 
@@ -27,7 +34,7 @@ CrossPick 是一个**纯前端**的跨境电商选品决策工具：用可解释
 npm install        # 安装依赖
 npm run dev        # 本地开发，默认 http://localhost:5173
 npm run build      # 类型检查 + 生产构建
-npm run test       # 运行单元测试（167 例，纯前端、无后端依赖）
+npm run test       # 运行单元测试（188 例，纯前端、无后端依赖）
 npm run preview    # 预览生产构建
 ```
 
@@ -120,9 +127,54 @@ Vue 3 · TypeScript · Vite · Pinia · Element Plus · ECharts · Ollama（本�
 
 ---
 
+## 开源与许可
+
+本项目以 **MIT License** 开源（见 [`LICENSE`](./LICENSE)）——你可以自由使用、修改、二次分发，也可用于商业用途，只需保留版权与许可声明。
+
+作为开源项目，它希望提供两类价值：
+
+1. **能用的个人选品工具**：装上就能跑，数据全在本地。
+2. **一份可读的 Agent 工程参考**：完整循环 + 可靠性工程 + 评估体系，代码量适中（`src/` 约 7.4k 行），适合边读边改。
+
+### 参与贡献
+
+欢迎 Issue 与 PR。动手前请注意：
+
+```bash
+npm run test        # 188 例，改动后必须全绿
+node node_modules/vue-tsc/bin/vue-tsc.js -b   # 类型检查需 0 错误
+npm run build       # 生产构建
+```
+
+约定：
+
+- **决策内核保持纯函数**：`src/domain/` 不引入 UI 与 LLM 依赖，任何改动都要能被单测覆盖。
+- **能不用 Agent 就不用 Agent**：确定性的计算不要交给模型。
+- **新工具要有测试**：在 `src/agent/tools/` 新增工具时，同步在 `tests/` 补意图 → 工具序列的断言。
+- 提交信息用 `feat:` / `fix:` / `chore:` / `test:` 前缀。
+
+### 隐私与安全
+
+- **数据不出浏览器**：候选品、复盘、设置全部存在本地 IndexedDB，项目不收集、不上传任何数据。
+- **API Key 只在本地**：云端模型的 Key 保存在你的浏览器里，仅用于直连你填写的 API 地址；**请勿把 Key 写进代码或提交到仓库**。
+- 若发现安全问题，请直接提 Issue 说明。
+
 ## 已知限制
 
 - 单用户、纯前端：无多端同步、无多人协作、无后端鉴权（定位为个人工具）。
 - 决策学习只拟合**维度权重**，不学档位（tiers）阈值——小样本下档位易过拟合。
 - 成功度标签阈值（`learning.ts` 中默认 月销 300 / 评分 4.0）可在设置页调整，需按类目校准。
 - 冷启动（< 5 条带实际表现的快照）不启用学习，避免噪声拟合。
+
+---
+
+## 开源范围说明
+
+- `docs/`（架构说明、ADR）与 `data/`（脚本生成的数据产物）**不在版本库内**：前者是开发过程文档，后者可用 `npm run import:amazon` 随时重建。仓库只保留 `data/.gitkeep` 占位，避免导出脚本因目录缺失报错。
+- 仓库中的 `src/adapters/mock.ts` 是演示用样例数据，不含任何真实商业数据。
+
+---
+
+## 免责声明
+
+本项目输出的是**辅助性分析**，不构成投资或经营建议。评分依赖你填入的数据质量，且月销量、采购成本等关键字段在数据受限时仅为估算（见上文「导入真实数据」的注意事项）。**实际选品请自行核实成本、合规认证与知识产权风险。**
