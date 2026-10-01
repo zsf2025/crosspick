@@ -1,5 +1,6 @@
 # CrossPick · 跨境电商选品决策助手
 
+[![GitHub](https://img.shields.io/badge/GitHub-zsf2025%2Fcrosspick-181717?logo=github)](https://github.com/zsf2025/crosspick)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 ![Vue 3](https://img.shields.io/badge/Vue-3-42b883.svg)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6.svg)
@@ -31,6 +32,8 @@ CrossPick 是一个**纯前端**的跨境电商选品决策工具：用可解释
 ## 快速开始
 
 ```bash
+git clone https://github.com/zsf2025/crosspick.git
+cd crosspick
 npm install        # 安装依赖
 npm run dev        # 本地开发，默认 http://localhost:5173
 npm run build      # 类型检查 + 生产构建
